@@ -1,7 +1,21 @@
 // ============================================================
-// E-RAPORT PKBM - SEED USERS
+// FILE PATH: scripts/seed.js
+// ============================================================
+// E-RAPORT PKBM — SEED USERS
 // Jalankan: node scripts/seed.js
-// Butuh: SUPABASE_URL dan SUPABASE_SERVICE_ROLE_KEY di .env
+// Butuh: NEXT_PUBLIC_SUPABASE_URL & SUPABASE_SERVICE_ROLE_KEY
+//        di .env.local
+//
+// CHANGELOG dari versi sebelumnya:
+//   - Hapus reliance pada trigger handle_new_user (yang gak ada
+//     di supabase-setup.sql v2.4 — fix PGRST116).
+//   - Pakai eksplisit upsert ke user_profiles setelah createUser
+//     auth.admin → idempotent, gak butuh sleep 800ms.
+//   - Pakai .maybeSingle() bukan .single() biar gak throw saat
+//     row gak ada.
+//   - Set is_active=true eksplisit (default schema = TRUE, tapi
+//     better explicit biar jelas intent-nya).
+//   - Destruct `error` di setiap query — gak ada lagi silent fail.
 // ============================================================
 
 import { createClient } from "@supabase/supabase-js";
@@ -13,7 +27,10 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error("❌ SUPABASE_URL atau SUPABASE_SERVICE_ROLE_KEY tidak ditemukan di .env.local");
+  console.error(
+    "❌ NEXT_PUBLIC_SUPABASE_URL atau SUPABASE_SERVICE_ROLE_KEY " +
+    "tidak ditemukan di .env.local"
+  );
   process.exit(1);
 }
 
@@ -30,14 +47,38 @@ const userList = [
     email: "admin@pkbm.com",
     password: "Admin@2026",
     role: "super_admin",
+    phone: null,
   },
   {
     full_name: "Nama User",
     email: "user@pkbm.com",
     password: "User@2026",
     role: "user",
+    phone: null,
   },
 ];
+
+// ============================================================
+// 🔧 HELPER — upsert profile (idempotent)
+// ============================================================
+async function upsertProfile(authUserId, userData) {
+  const { error } = await supabase
+    .from("user_profiles")
+    .upsert(
+      {
+        id: authUserId,
+        full_name: userData.full_name,
+        role: userData.role,
+        phone: userData.phone ?? null,
+        is_active: true,
+      },
+      { onConflict: "id" }
+    );
+
+  if (error) {
+    throw new Error(`Upsert profile gagal: ${error.message}`);
+  }
+}
 
 // ============================================================
 // 🚀 FUNGSI CREATE USER
@@ -46,72 +87,76 @@ async function createUser(userData) {
   try {
     console.log(`\n📝 Processing: ${userData.full_name} (${userData.email})`);
 
-    // Cek apakah sudah ada di auth
-    const { data: { users }, error: listError } = await supabase.auth.admin.listUsers();
+    // 1. Cek apakah auth user udah ada
+    const { data: authList, error: listError } =
+      await supabase.auth.admin.listUsers();
     if (listError) throw listError;
 
-    const existing = users.find((u) => u.email === userData.email);
+    const existing = authList.users.find((u) => u.email === userData.email);
+
+    let authUserId;
+    let createdNew = false;
 
     if (existing) {
       console.log(`   ⏭️  Auth user sudah ada (ID: ${existing.id})`);
+      authUserId = existing.id;
+    } else {
+      // 2a. Buat auth user baru
+      console.log(`   🔐 Membuat auth user...`);
+      const { data: authData, error: authError } =
+        await supabase.auth.admin.createUser({
+          email: userData.email,
+          password: userData.password,
+          email_confirm: true,
+          user_metadata: { full_name: userData.full_name },
+        });
 
-      const { data: profile } = await supabase
-        .from("user_profiles")
-        .select("id, role")
-        .eq("id", existing.id)
-        .single();
+      if (authError) throw authError;
+      if (!authData.user) throw new Error("No user data returned");
 
-      if (profile) {
-        if (profile.role !== userData.role) {
-          await supabase
-            .from("user_profiles")
-            .update({ role: userData.role, full_name: userData.full_name })
-            .eq("id", existing.id);
-          console.log(`   🔄 Role diupdate ke: ${userData.role}`);
-        } else {
-          console.log(`   ⏭️  Sudah ada di user_profiles, skip.`);
-        }
-        return { status: "skipped", ...userData };
-      }
-
-      // Belum ada profile — insert manual
-      const { error: insertError } = await supabase
-        .from("user_profiles")
-        .insert({ id: existing.id, full_name: userData.full_name, role: userData.role });
-      if (insertError) throw insertError;
-      console.log(`   ✅ Profile dibuat untuk existing user`);
-      return { status: "linked", ...userData };
+      authUserId = authData.user.id;
+      createdNew = true;
+      console.log(`   ✅ Auth user dibuat: ${authUserId}`);
     }
 
-    // Buat auth user baru
-    console.log(`   🔐 Membuat auth user...`);
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email: userData.email,
-      password: userData.password,
-      email_confirm: true,
-      user_metadata: { full_name: userData.full_name },
-    });
+    // 3. Cek apakah profile udah ada (pakai maybeSingle, gak throw kalau 0 rows)
+    const { data: existingProfile, error: profileSelectError } = await supabase
+      .from("user_profiles")
+      .select("id, role, full_name")
+      .eq("id", authUserId)
+      .maybeSingle();
 
-    if (authError) throw authError;
-    if (!authData.user) throw new Error("No user data returned");
-    console.log(`   ✅ Auth user dibuat: ${authData.user.id}`);
+    if (profileSelectError) throw profileSelectError;
 
-    // Tunggu trigger handle_new_user jalan
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    // 4. Upsert profile — bikin baru kalau belum ada, update kalau udah ada
+    //    (idempotent, aman di-rerun berkali-kali)
+    await upsertProfile(authUserId, userData);
 
-    // Update role kalau super_admin (trigger default-nya 'user')
-    if (userData.role === "super_admin") {
-      const { error: updateError } = await supabase
-        .from("user_profiles")
-        .update({ role: "super_admin", full_name: userData.full_name })
-        .eq("id", authData.user.id);
-      if (updateError) throw updateError;
-      console.log(`   👑 Role diset ke super_admin`);
+    if (!existingProfile) {
+      console.log(
+        `   ✅ Profile dibuat dengan role: ${userData.role}, full_name: ${userData.full_name}`
+      );
+      return {
+        status: createdNew ? "created" : "linked",
+        ...userData,
+        auth_id: authUserId,
+      };
     }
 
-    console.log(`   ✅ DONE: ${userData.full_name}`);
-    return { status: "created", ...userData, auth_id: authData.user.id };
+    // Profile udah ada — cek apakah ada perubahan
+    const changed =
+      existingProfile.role !== userData.role ||
+      existingProfile.full_name !== userData.full_name;
 
+    if (changed) {
+      console.log(
+        `   🔄 Profile diupdate: role=${userData.role}, full_name=${userData.full_name}`
+      );
+      return { status: "updated", ...userData, auth_id: authUserId };
+    }
+
+    console.log(`   ⏭️  Profile sudah sesuai, skip.`);
+    return { status: "skipped", ...userData, auth_id: authUserId };
   } catch (error) {
     console.error(`   ❌ ERROR: ${error.message}`);
     return { status: "failed", ...userData, error: error.message };
@@ -126,25 +171,48 @@ async function main() {
   console.log("=============================================\n");
   console.log(`📋 Total user: ${userList.length}\n`);
 
-  const results = { created: [], linked: [], skipped: [], failed: [] };
+  const results = {
+    created: [],
+    linked: [],
+    updated: [],
+    skipped: [],
+    failed: [],
+  };
 
   for (const user of userList) {
     const result = await createUser(user);
     results[result.status]?.push(result);
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
   console.log("\n\n=============================================");
   console.log("📊 HASIL");
   console.log("=============================================\n");
+
   console.log(`✅ Created : ${results.created.length}`);
-  results.created.forEach((r) => console.log(`   ✅ ${r.full_name} (${r.email}) — ${r.role}`));
+  results.created.forEach((r) =>
+    console.log(`   ✅ ${r.full_name} (${r.email}) — ${r.role}`)
+  );
+
   console.log(`\n🔗 Linked  : ${results.linked.length}`);
-  results.linked.forEach((r) => console.log(`   🔗 ${r.full_name} (${r.email})`));
+  results.linked.forEach((r) =>
+    console.log(`   🔗 ${r.full_name} (${r.email}) — auth ada, profile baru dibuat`)
+  );
+
+  console.log(`\n🔄 Updated : ${results.updated.length}`);
+  results.updated.forEach((r) =>
+    console.log(`   🔄 ${r.full_name} (${r.email})`)
+  );
+
   console.log(`\n⏭️  Skipped : ${results.skipped.length}`);
-  results.skipped.forEach((r) => console.log(`   ⏭️  ${r.full_name} (${r.email})`));
+  results.skipped.forEach((r) =>
+    console.log(`   ⏭️  ${r.full_name} (${r.email})`)
+  );
+
   console.log(`\n❌ Failed  : ${results.failed.length}`);
-  results.failed.forEach((r) => console.log(`   ❌ ${r.full_name} (${r.email}): ${r.error}`));
+  results.failed.forEach((r) =>
+    console.log(`   ❌ ${r.full_name} (${r.email}): ${r.error}`)
+  );
 
   console.log("\n\n=============================================");
   console.log("🔑 LOGIN CREDENTIALS");
@@ -158,5 +226,11 @@ async function main() {
 }
 
 main()
-  .then(() => { console.log("✅ Script selesai!"); process.exit(0); })
-  .catch((error) => { console.error("\n❌ Script gagal:", error); process.exit(1); });
+  .then(() => {
+    console.log("✅ Script selesai!");
+    process.exit(0);
+  })
+  .catch((error) => {
+    console.error("\n❌ Script gagal:", error);
+    process.exit(1);
+  });

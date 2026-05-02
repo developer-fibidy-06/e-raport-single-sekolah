@@ -1,10 +1,22 @@
 // ============================================================
 // FILE PATH: src/hooks/use-siswa.ts
 // ============================================================
-// REPLACE. Tambahan: useBulkImportSiswa untuk CSV import flow.
+// REPLACE. Perubahan dari versi sebelumnya:
 //
-// Existing hooks (usePesertaDidik, useCreatePesertaDidik, etc) TIDAK
-// BERUBAH — di-keep persis seperti versi sebelumnya.
+//   FIX BUG: useBulkImportSiswa sebelumnya hardcode `agama: "Islam"`
+//   sebagai placeholder. Itu bikin semua siswa yang di-impor lewat
+//   CSV ketag salah agama-nya — siswa Kristen/Katolik/dll jadi
+//   tag "Islam" di DB, dan mapel Pendidikan Agama mereka gak muncul
+//   di form penilaian (karena filter mata_pelajaran.agama matching
+//   peserta_didik.agama).
+//
+//   Sekarang: signature `rows` butuh field `agama` eksplisit dari
+//   caller. Caller (import-siswa-dialog.tsx) udah parse + validasi
+//   agama dari kolom CSV ke-4 + normalisasi ke canonical form sebelum
+//   manggil mutate.
+//
+// Sisa hooks (usePesertaDidik, useCreateEnrollment, dst) TIDAK
+// BERUBAH dari versi sebelumnya.
 // ============================================================
 
 "use client";
@@ -15,7 +27,10 @@ import type {
   PesertaDidikFormData,
   EnrollmentFormData,
 } from "@/lib/validators";
+import { AGAMA_VALUES } from "@/lib/validators";
 import { toast } from "sonner";
+
+type AgamaCanonical = (typeof AGAMA_VALUES)[number];
 
 const QK = {
   all: ["peserta_didik"] as const,
@@ -172,10 +187,17 @@ export function useUpdateEnrollmentStatus() {
 }
 
 // ============================================================
-// NEW — useBulkImportSiswa
+// useBulkImportSiswa
 // ============================================================
 // Bulk insert peserta_didik + bulk insert enrollment (atomic-ish:
 // kalau enrollment fail, rollback siswa yang baru dibuat di batch ini).
+//
+// FIX v2: agama sekarang field eksplisit per row, bukan hardcoded.
+// Caller WAJIB pass agama yang udah di-validasi+normalisasi ke
+// canonical form (Islam/Kristen/Katolik/Hindu/Buddha/Konghucu).
+// Kalo input agama invalid, DB CHECK constraint bakal reject —
+// tapi validator client-side (import-siswa-dialog) udah catch
+// duluan sebelum reach hook ini.
 //
 // Strategy:
 //   1. Insert semua peserta_didik sekaligus (1 query)
@@ -195,6 +217,7 @@ export function useBulkImportSiswa() {
       rows: Array<{
         nama_lengkap: string;
         jenis_kelamin: "L" | "P";
+        agama: AgamaCanonical;
         rombongan_belajar_id: number;
       }>;
       tahun_pelajaran_id: number;
@@ -203,11 +226,12 @@ export function useBulkImportSiswa() {
         return { inserted: 0 };
       }
 
-      // 1. Insert peserta_didik
+      // 1. Insert peserta_didik — agama dari input, BUKAN hardcoded.
+      //    Schema enforce: agama NOT NULL + CHECK 6 values.
       const siswaPayload = payload.rows.map((r) => ({
         nama_lengkap: r.nama_lengkap,
         jenis_kelamin: r.jenis_kelamin,
-        agama: "Islam" as const, // placeholder, admin lengkapi via edit form
+        agama: r.agama,
         is_aktif: true,
       }));
 
@@ -229,7 +253,9 @@ export function useBulkImportSiswa() {
         status: "aktif" as const,
       }));
 
-      const { error: e2 } = await supabase.from("enrollment").insert(enrollPayload);
+      const { error: e2 } = await supabase
+        .from("enrollment")
+        .insert(enrollPayload);
 
       if (e2) {
         // Rollback: hapus siswa yang baru dibuat di batch ini
@@ -250,9 +276,7 @@ export function useBulkImportSiswa() {
       uniqueKelas.forEach((kid) => {
         qc.invalidateQueries({ queryKey: QK.byKelas(kid) });
       });
-      toast.success(
-        `${result.inserted} siswa berhasil diimport & di-enroll`
-      );
+      toast.success(`${result.inserted} siswa berhasil diimport & di-enroll`);
     },
     onError: (err: Error) => toast.error("Gagal import: " + err.message),
   });
