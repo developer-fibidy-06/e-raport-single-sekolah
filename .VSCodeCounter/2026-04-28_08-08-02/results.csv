@@ -1,0 +1,139 @@
+"filename", "language", "TypeScript", "TypeScript JSX", "PostCSS", "comment", "blank", "total"
+"d:\PKBM\E-RAPORT\src\app\(auth)\layout.tsx", "TypeScript JSX", 0, 12, 0, 0, 0, 12
+"d:\PKBM\E-RAPORT\src\app\(auth)\login\page.tsx", "TypeScript JSX", 0, 18, 0, 0, 5, 23
+"d:\PKBM\E-RAPORT\src\app\(dashboard)\admin\page.tsx", "TypeScript JSX", 0, 248, 0, 23, 15, 286
+"d:\PKBM\E-RAPORT\src\app\(dashboard)\layout.tsx", "TypeScript JSX", 0, 53, 0, 14, 11, 78
+"d:\PKBM\E-RAPORT\src\app\(dashboard)\penilaian\[kelasId]\[enrollmentId]\page.tsx", "TypeScript JSX", 0, 450, 0, 37, 42, 529
+"d:\PKBM\E-RAPORT\src\app\(dashboard)\penilaian\[kelasId]\page.tsx", "TypeScript JSX", 0, 72, 0, 15, 10, 97
+"d:\PKBM\E-RAPORT\src\app\(dashboard)\penilaian\page.tsx", "TypeScript JSX", 0, 5, 0, 11, 3, 19
+"d:\PKBM\E-RAPORT\src\app\(dashboard)\profile\page.tsx", "TypeScript JSX", 0, 116, 0, 15, 12, 143
+"d:\PKBM\E-RAPORT\src\app\(dashboard)\rapor\[enrollmentId]\page.tsx", "TypeScript JSX", 0, 37, 0, 16, 7, 60
+"d:\PKBM\E-RAPORT\src\app\(dashboard)\rapor\page.tsx", "TypeScript JSX", 0, 5, 0, 9, 3, 17
+"d:\PKBM\E-RAPORT\src\app\(print)\cetak\[enrollmentId]\page.tsx", "TypeScript JSX", 0, 10, 0, 13, 4, 27
+"d:\PKBM\E-RAPORT\src\app\(print)\layout.tsx", "TypeScript JSX", 0, 11, 0, 5, 1, 17
+"d:\PKBM\E-RAPORT\src\app\api\admin\users\[id]\password\route.ts", "TypeScript", 33, 0, 0, 8, 8, 49
+"d:\PKBM\E-RAPORT\src\app\api\admin\users\[id]\route.ts", "TypeScript", 90, 0, 0, 20, 18, 128
+"d:\PKBM\E-RAPORT\src\app\api\admin\users\route.ts", "TypeScript", 95, 0, 0, 18, 16, 129
+"d:\PKBM\E-RAPORT\src\app\api\auth\callback\route.ts", "TypeScript", 23, 0, 0, 0, 5, 28
+"d:\PKBM\E-RAPORT\src\app\globals.css", "PostCSS", 0, 0, 166, 18, 24, 208
+"d:\PKBM\E-RAPORT\src\app\layout.tsx", "TypeScript JSX", 0, 76, 0, 0, 3, 79
+"d:\PKBM\E-RAPORT\src\app\page.tsx", "TypeScript JSX", 0, 12, 0, 0, 4, 16
+"d:\PKBM\E-RAPORT\src\components\features\admin\enrollment-dialog.tsx", "TypeScript JSX", 0, 572, 0, 22, 46, 640
+"d:\PKBM\E-RAPORT\src\components\features\admin\import-siswa-dialog.tsx", "TypeScript JSX", 0, 468, 0, 40, 50, 558
+"d:\PKBM\E-RAPORT\src\components\features\admin\index.ts", "TypeScript", 9, 0, 0, 5, 1, 15
+"d:\PKBM\E-RAPORT\src\components\features\admin\tab-ekskul-preset.tsx", "TypeScript JSX", 0, 421, 0, 36, 27, 484
+"d:\PKBM\E-RAPORT\src\components\features\admin\tab-mata-pelajaran.tsx", "TypeScript JSX", 0, 878, 0, 43, 58, 979
+"d:\PKBM\E-RAPORT\src\components\features\admin\tab-p5-master.tsx", "TypeScript JSX", 0, 969, 0, 82, 54, 1105
+"d:\PKBM\E-RAPORT\src\components\features\admin\tab-predikat.tsx", "TypeScript JSX", 0, 192, 0, 27, 15, 234
+"d:\PKBM\E-RAPORT\src\components\features\admin\tab-profil-pkbm.tsx", "TypeScript JSX", 0, 116, 0, 1, 11, 128
+"d:\PKBM\E-RAPORT\src\components\features\admin\tab-siswa.tsx", "TypeScript JSX", 0, 427, 0, 38, 17, 482
+"d:\PKBM\E-RAPORT\src\components\features\admin\tab-tahun-kelas.tsx", "TypeScript JSX", 0, 924, 0, 70, 50, 1044
+"d:\PKBM\E-RAPORT\src\components\features\admin\tab-users.tsx", "TypeScript JSX", 0, 1098, 0, 79, 56, 1233
+"d:\PKBM\E-RAPORT\src\components\features\auth\index.ts", "TypeScript", 2, 0, 0, 3, 1, 6
+"d:\PKBM\E-RAPORT\src\components\features\auth\login-form.tsx", "TypeScript JSX", 0, 221, 0, 2, 19, 242
+"d:\PKBM\E-RAPORT\src\components\features\auth\logout-button.tsx", "TypeScript JSX", 0, 64, 0, 0, 6, 70
+"d:\PKBM\E-RAPORT\src\components\features\index.ts", "TypeScript", 4, 0, 0, 0, 1, 5
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\absensi-catatan-form.tsx", "TypeScript JSX", 0, 497, 0, 48, 39, 584
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\ekskul-form.tsx", "TypeScript JSX", 0, 293, 0, 28, 20, 341
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\index.ts", "TypeScript", 10, 0, 0, 0, 0, 10
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\kelas-list.tsx", "TypeScript JSX", 0, 204, 0, 25, 16, 245
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\nilai-detail-drawer.tsx", "TypeScript JSX", 0, 379, 0, 41, 35, 455
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\nilai-form.tsx", "TypeScript JSX", 0, 489, 0, 46, 46, 581
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\p5-detail-drawer.tsx", "TypeScript JSX", 0, 224, 0, 55, 23, 302
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\p5-form.tsx", "TypeScript JSX", 0, 330, 0, 57, 31, 418
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\quick-fill-dialog.tsx", "TypeScript JSX", 0, 241, 0, 35, 19, 295
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\quick-fill-inline.tsx", "TypeScript JSX", 0, 36, 0, 6, 4, 46
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\quick-fill-panel.tsx", "TypeScript JSX", 0, 79, 0, 27, 8, 114
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\quick-fill-simple-dialog.tsx", "TypeScript JSX", 0, 153, 0, 20, 15, 188
+"d:\PKBM\E-RAPORT\src\components\features\penilaian\siswa-list.tsx", "TypeScript JSX", 0, 123, 0, 22, 9, 154
+"d:\PKBM\E-RAPORT\src\components\features\rapor\export-zip-dialog.tsx", "TypeScript JSX", 0, 356, 0, 33, 40, 429
+"d:\PKBM\E-RAPORT\src\components\features\rapor\index.ts", "TypeScript", 6, 0, 0, 5, 1, 12
+"d:\PKBM\E-RAPORT\src\components\features\rapor\rapor-kelas-drawer.tsx", "TypeScript JSX", 0, 271, 0, 42, 32, 345
+"d:\PKBM\E-RAPORT\src\components\features\rapor\rapor-kelas-list.tsx", "TypeScript JSX", 0, 353, 0, 35, 34, 422
+"d:\PKBM\E-RAPORT\src\components\features\rapor\rapor-pdf-document.tsx", "TypeScript JSX", 0, 563, 0, 42, 44, 649
+"d:\PKBM\E-RAPORT\src\components\features\rapor\rapor-pdf-styles.ts", "TypeScript", 309, 0, 0, 29, 20, 358
+"d:\PKBM\E-RAPORT\src\components\features\rapor\rapor-pdf-viewer.tsx", "TypeScript JSX", 0, 177, 0, 38, 17, 232
+"d:\PKBM\E-RAPORT\src\components\layout\app-sidebar.tsx", "TypeScript JSX", 0, 61, 0, 1, 5, 67
+"d:\PKBM\E-RAPORT\src\components\layout\header.tsx", "TypeScript JSX", 0, 24, 0, 4, 4, 32
+"d:\PKBM\E-RAPORT\src\components\layout\index.ts", "TypeScript", 12, 0, 0, 3, 1, 16
+"d:\PKBM\E-RAPORT\src\components\layout\mobile-nav.tsx", "TypeScript JSX", 0, 39, 0, 1, 4, 44
+"d:\PKBM\E-RAPORT\src\components\layout\nav-config.ts", "TypeScript", 68, 0, 0, 14, 8, 90
+"d:\PKBM\E-RAPORT\src\components\layout\user-menu.tsx", "TypeScript JSX", 0, 66, 0, 0, 5, 71
+"d:\PKBM\E-RAPORT\src\components\providers\auth-provider.tsx", "TypeScript JSX", 0, 5, 0, 0, 2, 7
+"d:\PKBM\E-RAPORT\src\components\providers\index.ts", "TypeScript", 2, 0, 0, 0, 1, 3
+"d:\PKBM\E-RAPORT\src\components\providers\query-provider.tsx", "TypeScript JSX", 0, 12, 0, 0, 4, 16
+"d:\PKBM\E-RAPORT\src\components\shared\confirm-dialog.tsx", "TypeScript JSX", 0, 52, 0, 0, 3, 55
+"d:\PKBM\E-RAPORT\src\components\shared\index.ts", "TypeScript", 3, 0, 0, 0, 0, 3
+"d:\PKBM\E-RAPORT\src\components\shared\loading-spinner.tsx", "TypeScript JSX", 0, 27, 0, 0, 4, 31
+"d:\PKBM\E-RAPORT\src\components\shared\offline-detector.tsx", "TypeScript JSX", 0, 64, 0, 0, 8, 72
+"d:\PKBM\E-RAPORT\src\components\ui\accordion.tsx", "TypeScript JSX", 0, 59, 0, 0, 8, 67
+"d:\PKBM\E-RAPORT\src\components\ui\alert-dialog.tsx", "TypeScript JSX", 0, 181, 0, 0, 16, 197
+"d:\PKBM\E-RAPORT\src\components\ui\alert.tsx", "TypeScript JSX", 0, 60, 0, 0, 7, 67
+"d:\PKBM\E-RAPORT\src\components\ui\avatar.tsx", "TypeScript JSX", 0, 47, 0, 0, 7, 54
+"d:\PKBM\E-RAPORT\src\components\ui\badge.tsx", "TypeScript JSX", 0, 41, 0, 0, 6, 47
+"d:\PKBM\E-RAPORT\src\components\ui\button-group.tsx", "TypeScript JSX", 0, 76, 0, 0, 8, 84
+"d:\PKBM\E-RAPORT\src\components\ui\button.tsx", "TypeScript JSX", 0, 59, 0, 0, 6, 65
+"d:\PKBM\E-RAPORT\src\components\ui\calendar.tsx", "TypeScript JSX", 0, 210, 0, 0, 11, 221
+"d:\PKBM\E-RAPORT\src\components\ui\card.tsx", "TypeScript JSX", 0, 83, 0, 0, 10, 93
+"d:\PKBM\E-RAPORT\src\components\ui\checkbox.tsx", "TypeScript JSX", 0, 28, 0, 0, 5, 33
+"d:\PKBM\E-RAPORT\src\components\ui\command.tsx", "TypeScript JSX", 0, 172, 0, 0, 13, 185
+"d:\PKBM\E-RAPORT\src\components\ui\dialog.tsx", "TypeScript JSX", 0, 145, 0, 0, 14, 159
+"d:\PKBM\E-RAPORT\src\components\ui\drawer.tsx", "TypeScript JSX", 0, 122, 0, 0, 14, 136
+"d:\PKBM\E-RAPORT\src\components\ui\dropdown-menu.tsx", "TypeScript JSX", 0, 239, 0, 0, 19, 258
+"d:\PKBM\E-RAPORT\src\components\ui\form.tsx", "TypeScript JSX", 0, 143, 0, 0, 25, 168
+"d:\PKBM\E-RAPORT\src\components\ui\input-group.tsx", "TypeScript JSX", 0, 152, 0, 3, 16, 171
+"d:\PKBM\E-RAPORT\src\components\ui\input.tsx", "TypeScript JSX", 0, 18, 0, 0, 4, 22
+"d:\PKBM\E-RAPORT\src\components\ui\label.tsx", "TypeScript JSX", 0, 20, 0, 0, 5, 25
+"d:\PKBM\E-RAPORT\src\components\ui\menubar.tsx", "TypeScript JSX", 0, 257, 0, 0, 20, 277
+"d:\PKBM\E-RAPORT\src\components\ui\native-select.tsx", "TypeScript JSX", 0, 57, 0, 0, 6, 63
+"d:\PKBM\E-RAPORT\src\components\ui\navigation-menu.tsx", "TypeScript JSX", 0, 157, 0, 0, 12, 169
+"d:\PKBM\E-RAPORT\src\components\ui\popover.tsx", "TypeScript JSX", 0, 41, 0, 0, 8, 49
+"d:\PKBM\E-RAPORT\src\components\ui\scroll-area.tsx", "TypeScript JSX", 0, 53, 0, 0, 6, 59
+"d:\PKBM\E-RAPORT\src\components\ui\select.tsx", "TypeScript JSX", 0, 177, 0, 0, 14, 191
+"d:\PKBM\E-RAPORT\src\components\ui\separator.tsx", "TypeScript JSX", 0, 24, 0, 0, 5, 29
+"d:\PKBM\E-RAPORT\src\components\ui\sheet.tsx", "TypeScript JSX", 0, 126, 0, 0, 14, 140
+"d:\PKBM\E-RAPORT\src\components\ui\skeleton.tsx", "TypeScript JSX", 0, 11, 0, 0, 3, 14
+"d:\PKBM\E-RAPORT\src\components\ui\sonner.tsx", "TypeScript JSX", 0, 36, 0, 0, 5, 41
+"d:\PKBM\E-RAPORT\src\components\ui\spinner.tsx", "TypeScript JSX", 0, 13, 0, 0, 4, 17
+"d:\PKBM\E-RAPORT\src\components\ui\switch.tsx", "TypeScript JSX", 0, 27, 0, 0, 5, 32
+"d:\PKBM\E-RAPORT\src\components\ui\table.tsx", "TypeScript JSX", 0, 105, 0, 0, 12, 117
+"d:\PKBM\E-RAPORT\src\components\ui\tabs.tsx", "TypeScript JSX", 0, 83, 0, 0, 9, 92
+"d:\PKBM\E-RAPORT\src\components\ui\textarea.tsx", "TypeScript JSX", 0, 15, 0, 0, 4, 19
+"d:\PKBM\E-RAPORT\src\components\ui\tooltip.tsx", "TypeScript JSX", 0, 54, 0, 0, 8, 62
+"d:\PKBM\E-RAPORT\src\constants\index.ts", "TypeScript", 1, 0, 0, 0, 0, 1
+"d:\PKBM\E-RAPORT\src\constants\routes.ts", "TypeScript", 23, 0, 0, 12, 7, 42
+"d:\PKBM\E-RAPORT\src\hooks\index.ts", "TypeScript", 111, 0, 0, 11, 7, 129
+"d:\PKBM\E-RAPORT\src\hooks\use-auth.ts", "TypeScript", 22, 0, 0, 0, 6, 28
+"d:\PKBM\E-RAPORT\src\hooks\use-ekskul-preset.ts", "TypeScript", 100, 0, 0, 10, 8, 118
+"d:\PKBM\E-RAPORT\src\hooks\use-enrollment.ts", "TypeScript", 208, 0, 0, 38, 17, 263
+"d:\PKBM\E-RAPORT\src\hooks\use-is-desktop.ts", "TypeScript", 14, 0, 0, 11, 6, 31
+"d:\PKBM\E-RAPORT\src\hooks\use-kelas.ts", "TypeScript", 97, 0, 0, 7, 8, 112
+"d:\PKBM\E-RAPORT\src\hooks\use-kompetensi.ts", "TypeScript", 70, 0, 0, 0, 7, 77
+"d:\PKBM\E-RAPORT\src\hooks\use-mata-pelajaran.ts", "TypeScript", 134, 0, 0, 30, 9, 173
+"d:\PKBM\E-RAPORT\src\hooks\use-nilai.ts", "TypeScript", 482, 0, 0, 36, 53, 571
+"d:\PKBM\E-RAPORT\src\hooks\use-p5-master.ts", "TypeScript", 248, 0, 0, 20, 22, 290
+"d:\PKBM\E-RAPORT\src\hooks\use-predikat.ts", "TypeScript", 37, 0, 0, 1, 5, 43
+"d:\PKBM\E-RAPORT\src\hooks\use-rapor.ts", "TypeScript", 187, 0, 0, 26, 19, 232
+"d:\PKBM\E-RAPORT\src\hooks\use-satuan-pendidikan.ts", "TypeScript", 39, 0, 0, 0, 5, 44
+"d:\PKBM\E-RAPORT\src\hooks\use-siswa.ts", "TypeScript", 210, 0, 0, 28, 20, 258
+"d:\PKBM\E-RAPORT\src\hooks\use-tahun-pelajaran.ts", "TypeScript", 92, 0, 0, 0, 8, 100
+"d:\PKBM\E-RAPORT\src\hooks\use-users.ts", "TypeScript", 155, 0, 0, 13, 11, 179
+"d:\PKBM\E-RAPORT\src\lib\auth-guard.ts", "TypeScript", 56, 0, 0, 18, 11, 85
+"d:\PKBM\E-RAPORT\src\lib\export-rapor-zip.ts", "TypeScript", 380, 0, 0, 30, 74, 484
+"d:\PKBM\E-RAPORT\src\lib\query-client.ts", "TypeScript", 26, 0, 0, 8, 7, 41
+"d:\PKBM\E-RAPORT\src\lib\quick-fill-absensi.ts", "TypeScript", 77, 0, 0, 21, 10, 108
+"d:\PKBM\E-RAPORT\src\lib\quick-fill-ekskul.ts", "TypeScript", 45, 0, 0, 30, 8, 83
+"d:\PKBM\E-RAPORT\src\lib\quick-fill-p5.ts", "TypeScript", 85, 0, 0, 51, 12, 148
+"d:\PKBM\E-RAPORT\src\lib\quick-fill.ts", "TypeScript", 19, 0, 0, 21, 6, 46
+"d:\PKBM\E-RAPORT\src\lib\supabase\admin.ts", "TypeScript", 21, 0, 0, 11, 4, 36
+"d:\PKBM\E-RAPORT\src\lib\supabase\client.ts", "TypeScript", 8, 0, 0, 0, 1, 9
+"d:\PKBM\E-RAPORT\src\lib\supabase\proxy.ts", "TypeScript", 30, 0, 0, 1, 4, 35
+"d:\PKBM\E-RAPORT\src\lib\supabase\server.ts", "TypeScript", 25, 0, 0, 1, 2, 28
+"d:\PKBM\E-RAPORT\src\lib\utils.ts", "TypeScript", 16, 0, 0, 0, 3, 19
+"d:\PKBM\E-RAPORT\src\lib\validators.ts", "TypeScript", 214, 0, 0, 85, 69, 368
+"d:\PKBM\E-RAPORT\src\proxy.ts", "TypeScript", 23, 0, 0, 10, 7, 40
+"d:\PKBM\E-RAPORT\src\stores\auth-store.ts", "TypeScript", 86, 0, 0, 2, 18, 106
+"d:\PKBM\E-RAPORT\src\stores\index.ts", "TypeScript", 1, 0, 0, 0, 0, 1
+"d:\PKBM\E-RAPORT\src\types\database.ts", "TypeScript", 875, 0, 0, 14, 27, 916
+"d:\PKBM\E-RAPORT\src\types\index.ts", "TypeScript", 100, 0, 0, 36, 24, 160
+"Total", "-", 4983, 15684, 166, 1912, 1939, 24684

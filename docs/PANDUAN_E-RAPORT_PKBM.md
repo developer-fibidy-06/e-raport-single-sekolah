@@ -1,0 +1,31 @@
+```markdown
+
+FITUR PRINT PAKE INI
+
+
+
+
+
+
+
+```json
+
+
+
+    "@react-pdf/renderer": "3.4.4",
+
+
+
+```
+
+
+
+
+
+DAN SATU HAL LAGI.. NAMA USER INI WIRED KE WALI KELAS.. STRING AJA CONTOH KELAS 12B SRI UTAMI WALI KELAS
+
+EKSEKSUI SETELAH SAYA SHARE CODEBASE
+
+
+
+```
