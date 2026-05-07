@@ -3,24 +3,25 @@
 // ============================================================
 // REPLACE. Perubahan dari versi sebelumnya:
 //
-//   FIX FEATURE: useBulkImportSiswa sekarang terima NIS & NISN
-//   eksplisit dari caller. Sebelumnya cuma terima nama, JK, agama,
-//   dan kelas — NIS/NISN gak ke-pass jadi siswa baru selalu null
-//   buat 2 field itu.
+//   NEW: useDeletePesertaDidik (single delete)
+//   NEW: useBulkDeletePesertaDidik (multi delete via .in() query)
 //
-//   Sekarang:
-//   1. Signature `rows` butuh field `nis: string | null` dan
-//      `nisn: string | null`. Caller (import-siswa-dialog.tsx)
-//      udah validasi + normalisasi (trim, dupe check antar baris,
-//      dupe check vs DB existing) sebelum manggil mutate.
-//   2. Insert payload include `nis` + `nisn`.
-//   3. Error handling: kalau insert fail karena UNIQUE violation
-//      di NISN (race condition concurrent admin), parse error
-//      message biar admin tau NISN mana yang konflik dan kasih
-//      saran retry.
+//   Both hooks rely on migration v2.6 (enrollment.peserta_didik_id
+//   ON DELETE CASCADE). Kalau migration belum dijalankan, error 23503
+//   bakal di-catch dan ditampilkan dengan pesan jelas — admin tau
+//   harus jalankan migration dulu, bukan diem-diem fail.
 //
-// Sisa hooks (usePesertaDidik, useCreateEnrollment, dst) TIDAK
-// BERUBAH dari versi sebelumnya.
+//   Cache invalidation setelah delete:
+//     - peserta_didik (list utama)
+//     - enrollment (cascade)
+//     - nilai_mapel, penilaian_p5, catatan_p5, ekstrakurikuler,
+//       ketidakhadiran, catatan_wali_kelas, rapor_header (cascade child)
+//     - siswa_deletion_impact (refresh impact preview)
+//
+//   Sisa hooks (usePesertaDidik, useCreatePesertaDidik,
+//   useUpdatePesertaDidik, useEnrollmentByKelas, useCreateEnrollment,
+//   useUpdateEnrollmentStatus, useBulkImportSiswa) PRESERVED tanpa
+//   perubahan dari versi sebelumnya.
 // ============================================================
 
 "use client";
@@ -42,6 +43,44 @@ const QK = {
   enrollment: ["enrollment"] as const,
   byKelas: (kelasId: number) => ["enrollment", "kelas", kelasId] as const,
 };
+
+// ============================================================
+// HELPER: detect FK violation (in case migration v2.6 hasn't run)
+// ============================================================
+
+function isFkViolation(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as { code?: string; message?: string };
+  if (e.code === "23503") return true;
+  if (e.message && /foreign key|violates.*constraint/i.test(e.message)) {
+    return true;
+  }
+  return false;
+}
+
+const FK_VIOLATION_MESSAGE =
+  "Tidak bisa hapus siswa: masih ada data terkait yang belum di-cascade. " +
+  "Pastikan migration v2.6 (ON DELETE CASCADE untuk peserta_didik) sudah " +
+  "dijalankan di Supabase, atau hubungi admin teknis.";
+
+// Helper buat invalidate semua cache yang ke-impact saat delete siswa
+function invalidateAllSiswaCaches(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: QK.all });
+  qc.invalidateQueries({ queryKey: ["enrollment"] });
+  qc.invalidateQueries({ queryKey: ["nilai_mapel"] });
+  qc.invalidateQueries({ queryKey: ["penilaian_p5"] });
+  qc.invalidateQueries({ queryKey: ["catatan_p5"] });
+  qc.invalidateQueries({ queryKey: ["ekstrakurikuler"] });
+  qc.invalidateQueries({ queryKey: ["ketidakhadiran"] });
+  qc.invalidateQueries({ queryKey: ["catatan_wali_kelas"] });
+  qc.invalidateQueries({ queryKey: ["rapor_header"] });
+  qc.invalidateQueries({ queryKey: ["siswa_deletion_impact"] });
+  qc.invalidateQueries({ queryKey: ["kelas_deletion_impact"] });
+}
+
+// ============================================================
+// QUERIES
+// ============================================================
 
 export function usePesertaDidik() {
   const supabase = createClient();
@@ -74,6 +113,10 @@ export function usePesertaDidikById(id: string | null) {
     },
   });
 }
+
+// ============================================================
+// MUTATIONS — CREATE / UPDATE
+// ============================================================
 
 export function useCreatePesertaDidik() {
   const supabase = createClient();
@@ -121,6 +164,69 @@ export function useUpdatePesertaDidik() {
     onError: (err: Error) => toast.error("Gagal: " + err.message),
   });
 }
+
+// ============================================================
+// MUTATIONS — DELETE (single + bulk)
+// ============================================================
+// Both rely on migration v2.6 (CASCADE). Sebelum migration:
+//   - DELETE 1 siswa dengan enrollment → error 23503 → user-friendly msg
+// Setelah migration:
+//   - DELETE auto-cascade enrollment + semua child (nilai, rapor, dll)
+// ============================================================
+
+export function useDeletePesertaDidik() {
+  const supabase = createClient();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase
+        .from("peserta_didik")
+        .delete()
+        .eq("id", id);
+      if (error) {
+        if (isFkViolation(error)) {
+          throw new Error(FK_VIOLATION_MESSAGE);
+        }
+        throw error;
+      }
+    },
+    onSuccess: () => {
+      invalidateAllSiswaCaches(qc);
+      toast.success("Siswa dan semua data terkait berhasil dihapus");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+export function useBulkDeletePesertaDidik() {
+  const supabase = createClient();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      if (ids.length === 0) return { count: 0 };
+      const { error } = await supabase
+        .from("peserta_didik")
+        .delete()
+        .in("id", ids);
+      if (error) {
+        if (isFkViolation(error)) {
+          throw new Error(FK_VIOLATION_MESSAGE);
+        }
+        throw error;
+      }
+      return { count: ids.length };
+    },
+    onSuccess: (res) => {
+      invalidateAllSiswaCaches(qc);
+      toast.success(`${res?.count ?? 0} siswa berhasil dihapus`);
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+}
+
+// ============================================================
+// ENROLLMENT — preserved
+// ============================================================
 
 export function useEnrollmentByKelas(kelasId: number | null) {
   const supabase = createClient();
@@ -190,38 +296,9 @@ export function useUpdateEnrollmentStatus() {
 }
 
 // ============================================================
-// useBulkImportSiswa
-// ============================================================
-// Bulk insert peserta_didik + bulk insert enrollment (atomic-ish:
-// kalau enrollment fail, rollback siswa yang baru dibuat di batch ini).
-//
-// FEATURE v3 (current): NIS & NISN sekarang ikut di-pass dari caller.
-// Caller (import-siswa-dialog) udah:
-//   - Trim whitespace, kalau kosong jadi null
-//   - Cek dupe NISN antar baris di CSV yang sama
-//   - Cek dupe NISN vs DB existing (pre-fetch)
-//
-// Hook ini cuma handle:
-//   - Insert ke peserta_didik dengan field nis & nisn
-//   - Catch UNIQUE violation race condition (kalau ada concurrent
-//     admin yang insert NISN sama persis di window kecil antara
-//     pre-fetch dan submit)
-//   - Rollback siswa kalau enrollment fail
-//
-// Strategy:
-//   1. Insert semua peserta_didik sekaligus (1 query)
-//   2. Pakai returned IDs untuk build payload enrollment
-//   3. Insert semua enrollment sekaligus (1 query)
-//   4. Kalau enrollment fail → delete semua peserta_didik yang baru
-//      dibuat di batch ini (rollback manual karena Supabase JS
-//      client gak punya transaction support)
+// useBulkImportSiswa — preserved (NIS/NISN dukungan + race handling)
 // ============================================================
 
-// Helper: parse Postgres UNIQUE violation pesan untuk extract NISN
-// yang konflik. Format pesan biasanya:
-//   "duplicate key value violates unique constraint
-//    \"peserta_didik_nisn_key\"
-//    DETAIL: Key (nisn)=(0000347149) already exists."
 function parseUniqueNisnViolation(errorMsg: string): string | null {
   const match = errorMsg.match(/Key \(nisn\)=\(([^)]+)\) already exists/i);
   return match?.[1] ?? null;
@@ -247,10 +324,6 @@ export function useBulkImportSiswa() {
         return { inserted: 0 };
       }
 
-      // 1. Insert peserta_didik dengan NIS & NISN dari input.
-      //    DB enforce UNIQUE pada nisn — kalau ada race condition
-      //    (concurrent admin), insert akan fail dan kita parse
-      //    error message untuk kasih feedback yang berguna.
       const siswaPayload = payload.rows.map((r) => ({
         nama_lengkap: r.nama_lengkap,
         jenis_kelamin: r.jenis_kelamin,
@@ -266,7 +339,6 @@ export function useBulkImportSiswa() {
         .select("id");
 
       if (e1) {
-        // Cek apakah ini UNIQUE violation di NISN (race condition)
         const conflictNisn = parseUniqueNisnViolation(e1.message);
         if (conflictNisn) {
           throw new Error(
@@ -280,8 +352,6 @@ export function useBulkImportSiswa() {
         throw new Error("Gagal insert siswa: response kosong");
       }
 
-      // 2. Build enrollment payload — match index by index
-      //    karena urutan returned IDs sama dengan urutan insert
       const enrollPayload = insertedSiswa.map((s, i) => ({
         peserta_didik_id: s.id,
         rombongan_belajar_id: payload.rows[i].rombongan_belajar_id,
@@ -294,7 +364,6 @@ export function useBulkImportSiswa() {
         .insert(enrollPayload);
 
       if (e2) {
-        // Rollback: hapus siswa yang baru dibuat di batch ini
         const newIds = insertedSiswa.map((s) => s.id);
         await supabase.from("peserta_didik").delete().in("id", newIds);
         throw new Error("Gagal enroll siswa: " + e2.message);
@@ -305,7 +374,6 @@ export function useBulkImportSiswa() {
     onSuccess: (result, vars) => {
       qc.invalidateQueries({ queryKey: QK.all });
       qc.invalidateQueries({ queryKey: ["enrollment"] });
-      // Invalidate per-kelas yang ke-touch
       const uniqueKelas = [
         ...new Set(vars.rows.map((r) => r.rombongan_belajar_id)),
       ];

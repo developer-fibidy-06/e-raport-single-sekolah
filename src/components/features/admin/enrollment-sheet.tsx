@@ -1,13 +1,60 @@
 // ============================================================
-// FILE PATH: src/components/features/admin/enrollment-dialog.tsx
+// FILE PATH: src/components/features/admin/enrollment-sheet.tsx
 // ============================================================
-// Komponen baru untuk kelola siswa per kelas.
-// Dipakai oleh TabTahunKelas.
+// REPLACE versi enrollment-dialog.tsx. v2.7 — migrasi Modal/Dialog
+// → Sheet pattern untuk shell utama (kelola siswa).
+//
+// CHANGELOG vs enrollment-dialog.tsx (v2.6):
+//
+//   1. Shell: Dialog (modal centered) → Sheet (side panel desktop /
+//      bottom sheet mobile). Konsisten dengan KelolaKelasSheet
+//      parent + Tambah/Edit child.
+//
+//   2. Width Sheet: sm:max-w-xl (576px). Seragam dengan parent
+//      KelolaKelas dan child Tambah/Edit. Child fully overlap
+//      parent secara visual, tapi stacking terbukti via Radix
+//      overlay + slide-in animation + portal mount order.
+//
+//   3. ConfirmKeluarDialog (nested di TerdaftarPanel) — TETAP Dialog
+//      modal centered. Sesuai filosofi: modal khusus untuk konfirmasi
+//      destruktif (drop out/pindah/lulus = soft-delete enrollment).
+//      Ini akan jadi 3-level stacking saat user trigger keluarkan
+//      siswa: parent KelolaKelasSheet → child EnrollmentSheet →
+//      ConfirmKeluarDialog modal. Radix Dialog handle z-index via
+//      portal mount order otomatis.
+//
+//   4. Header pattern konsisten dengan TambahKelasSheet/EditKelasSheet:
+//      icon kotak primary/10 + label uppercase + heading + subtitle.
+//      Padding pr-12 untuk space tombol X auto Sheet.
+//
+//   5. Tab navigation di-pindah ke header sheet (di bawah heading,
+//      di atas content scrollable). Tetep horizontal scroll friendly
+//      di mobile via overflow-x-auto + scrollbar-hide.
+//
+//   6. PRESERVED:
+//      - 3 panel: TerdaftarPanel, ExistingPanel, BaruPanel
+//      - Semua hooks (useEnrollmentByKelasAll, useUnenrolledSiswa,
+//        useEnrollSiswa, useSetEnrollmentStatus, useCreateSiswaAndEnroll)
+//      - Status filter (aktif/non-aktif/all) di TerdaftarPanel
+//      - Search + bulk select di ExistingPanel
+//      - Quick form di BaruPanel
+//      - StatusBadge mapping (aktif/keluar/pindah/lulus)
+//      - ConfirmKeluarDialog (modal untuk soft-delete enrollment)
+//
+//   7. NAMA EXPORT berubah: EnrollmentDialog → EnrollmentSheet.
+//      Signature props juga berubah:
+//        - Old: { open, onOpenChange, kelas: KelasCtx }
+//        - New: { kelas: KelasCtx | null, onClose: () => void }
+//      Ini konsisten dengan EditKelasSheet pattern.
+//
+//   8. NOTE: file `enrollment-dialog.tsx` lama bisa dihapus setelah
+//      tab-tahun-kelas.tsx selesai di-replace. Tidak ada file lain
+//      yang import enrollment-dialog.
 // ============================================================
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useEnrollmentByKelasAll,
   useUnenrolledSiswa,
@@ -15,6 +62,13 @@ import {
   useSetEnrollmentStatus,
   useCreateSiswaAndEnroll,
 } from "@/hooks";
+import { useIsDesktop } from "@/hooks/use-is-desktop";
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import {
   Dialog,
   DialogContent,
@@ -52,73 +106,124 @@ interface KelasCtx {
 }
 
 interface Props {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  kelas: KelasCtx;
+  kelas: KelasCtx | null;
+  onClose: () => void;
 }
 
 type TabKey = "terdaftar" | "existing" | "baru";
 
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Users }> = [
-  { key: "terdaftar", label: "Siswa Terdaftar", icon: Users },
+  { key: "terdaftar", label: "Terdaftar", icon: Users },
   { key: "existing", label: "Pilih Existing", icon: ListChecks },
-  { key: "baru", label: "Daftarkan Baru", icon: UserPlus },
+  { key: "baru", label: "Daftar Baru", icon: UserPlus },
 ];
 
-export function EnrollmentDialog({ open, onOpenChange, kelas }: Props) {
+// ============================================================
+// EnrollmentSheet — CHILD SHEET (replaces EnrollmentDialog)
+// ============================================================
+
+export function EnrollmentSheet({ kelas, onClose }: Props) {
+  const isDesktop = useIsDesktop();
+  const open = kelas !== null;
   const [tab, setTab] = useState<TabKey>("terdaftar");
 
+  // Reset tab tiap sheet dibuka untuk kelas yang berbeda
+  // (atau saat dibuka pertama kali setelah close).
+  useEffect(() => {
+    if (kelas) setTab("terdaftar");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kelas?.id]);
+
   return (
-    <Dialog
+    <Sheet
       open={open}
       onOpenChange={(v) => {
-        if (!v) setTab("terdaftar");
-        onOpenChange(v);
+        if (!v) onClose();
       }}
     >
-      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0">
-        <DialogHeader className="p-6 pb-3 border-b">
-          <DialogTitle>Kelola Siswa — {kelas.nama_kelas}</DialogTitle>
-          <p className="text-xs text-muted-foreground mt-1">
-            {kelas.paket} · {kelas.fase}
-          </p>
-        </DialogHeader>
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[92vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          Kelola Siswa — {kelas?.nama_kelas ?? ""}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Lihat siswa terdaftar, enroll dari master data, atau daftarkan siswa
+          baru ke kelas ini
+        </SheetDescription>
 
-        {/* Tabs */}
-        <div className="flex gap-1 px-6 border-b overflow-x-auto scrollbar-hide">
-          {TABS.map((t) => {
-            const Icon = t.icon;
-            return (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setTab(t.key)}
-                className={cn(
-                  "flex items-center gap-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors -mb-px",
-                  tab === t.key
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
-          {tab === "terdaftar" && <TerdaftarPanel kelas={kelas} />}
-          {tab === "existing" && (
-            <ExistingPanel kelas={kelas} onSuccess={() => setTab("terdaftar")} />
-          )}
-          {tab === "baru" && (
-            <BaruPanel kelas={kelas} onSuccess={() => setTab("terdaftar")} />
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+        {kelas && (
+          <>
+            {/* Header — pr-12 supaya tidak ketabrak tombol X auto Sheet */}
+            <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+                <Users className="h-4 w-4 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                  Kelola Siswa
+                </p>
+                <h3 className="text-base font-semibold leading-tight mt-0.5 truncate">
+                  {kelas.nama_kelas}
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                  {kelas.paket} · {kelas.fase}
+                </p>
+              </div>
+            </div>
+
+            {/* Tabs — horizontal, sticky di bawah header */}
+            <div className="flex gap-1 px-4 sm:px-5 border-b overflow-x-auto scrollbar-hide flex-shrink-0">
+              {TABS.map((t) => {
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => setTab(t.key)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors -mb-px",
+                      tab === t.key
+                        ? "border-primary text-foreground"
+                        : "border-transparent text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Content — scrollable */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5">
+              {tab === "terdaftar" && <TerdaftarPanel kelas={kelas} />}
+              {tab === "existing" && (
+                <ExistingPanel
+                  kelas={kelas}
+                  onSuccess={() => setTab("terdaftar")}
+                />
+              )}
+              {tab === "baru" && (
+                <BaruPanel
+                  kelas={kelas}
+                  onSuccess={() => setTab("terdaftar")}
+                />
+              )}
+            </div>
+          </>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -195,7 +300,7 @@ function TerdaftarPanel({ kelas }: { kelas: KelasCtx }) {
       {filtered.length === 0 ? (
         <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
           {statusFilter === "aktif"
-            ? 'Belum ada siswa aktif. Klik tab "Pilih Existing" atau "Daftarkan Baru".'
+            ? 'Belum ada siswa aktif. Klik tab "Pilih Existing" atau "Daftar Baru".'
             : "Tidak ada siswa dengan status ini."}
         </div>
       ) : (
@@ -283,6 +388,14 @@ function StatusBadge({ status }: { status: string }) {
     </Badge>
   );
 }
+
+// ────────────────────────────────────────────────────────────
+// ConfirmKeluarDialog — MODAL (3rd-level stacking, tetap Dialog)
+// ────────────────────────────────────────────────────────────
+// Sesuai filosofi: modal khusus untuk konfirmasi destruktif.
+// Soft-delete enrollment (status: keluar/pindah/lulus) = OK pakai
+// modal, sama seperti DeleteKelasConfirm di tab-tahun-kelas.tsx.
+// ────────────────────────────────────────────────────────────
 
 function ConfirmKeluarDialog({
   enrollmentId,
@@ -426,7 +539,7 @@ function ExistingPanel({
         </p>
         <p className="text-xs text-amber-700 mt-1">
           Semua siswa di master data sudah punya enrollment di tahun pelajaran ini.
-          Gunakan tab &quot;Daftarkan Baru&quot; untuk siswa baru.
+          Gunakan tab &quot;Daftar Baru&quot; untuk siswa baru.
         </p>
       </div>
     );

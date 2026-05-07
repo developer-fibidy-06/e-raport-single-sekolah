@@ -1,46 +1,47 @@
 // ============================================================
 // FILE PATH: src/components/features/admin/tab-users.tsx
 // ============================================================
-// REPLACE. Major refactor — match pattern Tab P5 Master:
+// REPLACE. v3.0 — migrasi vaul Drawer + Dialog → shadcn Sheet.
 //
-//   1. HAPUS heading "Manajemen Pengguna" + subtitle deskriptif
-//   2. Stats counter (Total / Aktif / Super Admin) — HAPUS Card
-//      wrapper, ganti jadi vertical compact list (label-value
-//      pairs) di kiri toolbar, sejajar dengan tombol Tambah User
-//      di kanan
-//   3. List user (Card-style stack) → Table 5 kolom
-//      (Avatar | Nama+email+badges | Login Terakhir (md:show) |
-//       Switch Aktif | Kebab)
-//   4. Inline icons (Switch + Key + Pencil + Trash) → konsolidasi
-//      ke kebab menu (titik 3) dengan items: Edit User, Reset
-//      Password, separator, Hapus User. Switch Aktif TETEP inline
-//      karena toggle state (bukan action) — quick-toggle gerakan
-//      satu tap, jangan dipindah ke kebab
-//   5. Tap row → UserDetailDrawer kebuka. Body: info detail (email,
-//      phone, login terakhir, akun dibuat). Footer: Tutup + Edit
-//      User shortcut. Drawer untuk USERS = read-only detail viewer
-//      (no children to manage), tapi tetep ada Edit shortcut di
-//      footer biar user gak harus close drawer + buka kebab.
+// CHANGELOG vs versi sebelumnya:
 //
-// Yang DIPERTAHANKAN:
-//   - AddUserDialog, EditUserDialog, ResetPasswordDialog (form-form
-//     internal). Cuma komponen presentational list yang berubah.
-//   - All hooks (useAdminUsers, useCreateUser, dst)
-//   - Self-prevention guards (can't demote/disable/delete diri
-//     sendiri)
-//   - Access denied screen untuk non-super_admin
+//   1. UserDetailDrawer (vaul Drawer) → UserDetailSheet
+//      Migrate primitive vaul ke shadcn Sheet. Visual sama (side
+//      panel desktop / bottom sheet mobile), tapi pakai 1 primitive
+//      yang konsisten dengan sisa codebase. Pattern viewer di-
+//      pertahankan karena info detail (last login, role, audit)
+//      genuinely useful sebelum admin klik Edit.
 //
-// Catatan UX:
-//   - Hapus User di kebab tetep di-disable kalau isSelf
-//   - Switch toggle aktif tetep di-disable kalau isSelf
-//   - Tap row aman dari Switch click berkat stopPropagation
+//   2. AddUserDialog → AddUserSheet (no parent, dari toolbar)
+//   3. EditUserDialog → EditUserSheet (bisa standalone dari kebab,
+//      atau child dari UserDetailSheet)
+//   4. ResetPasswordDialog → ResetPasswordSheet (sama pattern)
+//
+//   5. STACKING:
+//      Row tap → UserDetailSheet (parent viewer)
+//        ├── Edit dari footer/kebab → EditUserSheet
+//        └── Reset PW dari footer/kebab → ResetPasswordSheet
+//      Toolbar [Tambah User] → AddUserSheet (no parent)
+//      Width: semua sm:max-w-xl (default tier — form simple).
+//
+//   6. PRESERVED:
+//      - Semua hooks, stats counter compact, search filter
+//      - Table 5 kolom dengan inline Switch toggle (state, bukan
+//        action — gak dipindah ke kebab)
+//      - Kebab menu: Edit / Reset Password / sep / Hapus
+//      - Self-prevention guards (can't demote/disable/delete diri
+//        sendiri)
+//      - Confirm delete (AlertDialog) — modal untuk delete OK
+//      - Access denied screen untuk non-super_admin
+//      - Show/hide password toggle
+//
+//   7. REMOVED: import { Drawer } from "vaul" — gak dipake lagi.
 // ============================================================
 
 "use client";
 
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
-import { Drawer } from "vaul";
 import { useAuthStore } from "@/stores";
 import {
   useAdminUsers,
@@ -62,7 +63,6 @@ import {
   type UserResetPasswordFormData,
 } from "@/lib/validators";
 
-// shadcn primitives
 import {
   Form,
   FormControl,
@@ -83,13 +83,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -132,8 +130,8 @@ import {
   Mail,
   Phone,
   CalendarPlus,
-  X,
   MoreHorizontal,
+  UserPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -175,7 +173,6 @@ export function TabUsers() {
     return { total, aktif, superAdmins };
   }, [users]);
 
-  // Guard: hanya super_admin yang bisa lihat tab ini
   if (!isAdmin) {
     return (
       <Card className="border-destructive/30 bg-destructive/5">
@@ -194,7 +191,6 @@ export function TabUsers() {
 
   return (
     <div className="space-y-4">
-      {/* Toolbar: stats vertikal compact (kiri) + tombol Tambah (kanan) */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="space-y-0.5">
           <StatLine label="Total User" value={stats.total} />
@@ -215,7 +211,6 @@ export function TabUsers() {
         </Button>
       </div>
 
-      {/* Search */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
@@ -226,7 +221,6 @@ export function TabUsers() {
         />
       </div>
 
-      {/* Error state */}
       {error && (
         <Card className="border-destructive/30 bg-destructive/5">
           <CardContent className="flex items-start gap-3 py-4">
@@ -249,7 +243,6 @@ export function TabUsers() {
         </Card>
       )}
 
-      {/* Table */}
       {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -297,29 +290,20 @@ export function TabUsers() {
         </div>
       )}
 
-      {/* Dialogs */}
-      <AddUserDialog open={showAdd} onOpenChange={setShowAdd} />
-      <EditUserDialog user={editUser} onClose={() => setEditUser(null)} />
-      <ResetPasswordDialog
+      {/* Sheets */}
+      <AddUserSheet open={showAdd} onOpenChange={setShowAdd} />
+      <EditUserSheet user={editUser} onClose={() => setEditUser(null)} />
+      <ResetPasswordSheet
         user={resetPwUser}
         onClose={() => setResetPwUser(null)}
       />
-
-      {/* Drawer */}
-      <UserDetailDrawer
+      <UserDetailSheet
         user={drawerUser}
         onClose={() => setDrawerUser(null)}
-        onEdit={(u) => {
-          setDrawerUser(null);
-          setEditUser(u);
-        }}
-        onResetPw={(u) => {
-          setDrawerUser(null);
-          setResetPwUser(u);
-        }}
+        onEdit={(u) => setEditUser(u)}
+        onResetPw={(u) => setResetPwUser(u)}
       />
 
-      {/* Delete confirm */}
       {confirmDelete && (
         <AlertDialog
           open
@@ -357,7 +341,7 @@ export function TabUsers() {
 }
 
 // ============================================================
-// StatLine — compact label-value pair, no Card wrapper
+// StatLine
 // ============================================================
 
 function StatLine({
@@ -385,7 +369,7 @@ function StatLine({
 }
 
 // ============================================================
-// UserTableRow — single row dengan kebab menu
+// UserTableRow
 // ============================================================
 
 function UserTableRow({
@@ -412,7 +396,6 @@ function UserTableRow({
       onClick={onOpenDrawer}
       className={cn("cursor-pointer", !user.is_active && "opacity-60")}
     >
-      {/* Avatar */}
       <TableCell className="w-12 px-3 py-2.5">
         <div
           className={cn(
@@ -427,8 +410,6 @@ function UserTableRow({
           )}
         </div>
       </TableCell>
-
-      {/* Nama + email + badges (truncate) */}
       <TableCell className="px-2 py-2.5 max-w-0">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -466,7 +447,6 @@ function UserTableRow({
           <p className="text-xs text-muted-foreground truncate">
             {user.email ?? "(no email)"}
           </p>
-          {/* Last login — show in name cell on mobile only */}
           {user.last_sign_in_at && (
             <p className="md:hidden text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
               <Clock className="h-2.5 w-2.5 flex-shrink-0" />
@@ -475,8 +455,6 @@ function UserTableRow({
           )}
         </div>
       </TableCell>
-
-      {/* Last login — desktop only column */}
       <TableCell className="hidden md:table-cell w-44 px-2 py-2.5">
         {user.last_sign_in_at ? (
           <p className="text-xs text-muted-foreground flex items-center gap-1">
@@ -489,8 +467,6 @@ function UserTableRow({
           </span>
         )}
       </TableCell>
-
-      {/* Switch toggle — inline (state, bukan action) */}
       <TableCell className="w-16 px-2 py-2.5 text-center">
         <div
           className="inline-flex"
@@ -510,8 +486,6 @@ function UserTableRow({
           />
         </div>
       </TableCell>
-
-      {/* Kebab menu */}
       <TableCell className="w-12 px-2 py-2.5 text-right">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -566,10 +540,6 @@ function UserTableRow({
   );
 }
 
-// ============================================================
-// formatDateTime — helper format Indonesian datetime
-// ============================================================
-
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString("id-ID", {
     day: "numeric",
@@ -581,10 +551,10 @@ function formatDateTime(iso: string): string {
 }
 
 // ============================================================
-// UserDetailDrawer — vaul responsive direction
+// UserDetailSheet — PARENT VIEWER
 // ============================================================
 
-function UserDetailDrawer({
+function UserDetailSheet({
   user,
   onClose,
   onEdit,
@@ -596,52 +566,48 @@ function UserDetailDrawer({
   onResetPw: (u: AdminUser) => void;
 }) {
   const isDesktop = useIsDesktop();
-  const direction = isDesktop ? "right" : "bottom";
   const open = user !== null;
 
   return (
-    <Drawer.Root
+    <Sheet
       open={open}
       onOpenChange={(v) => {
         if (!v) onClose();
       }}
-      direction={direction}
     >
-      <Drawer.Portal>
-        <Drawer.Overlay className="fixed inset-0 z-50 bg-black/40" />
-        <Drawer.Content
-          className={cn(
-            "fixed z-50 flex flex-col bg-background outline-none",
-            isDesktop &&
-            "right-0 top-0 bottom-0 w-full max-w-md border-l shadow-xl",
-            !isDesktop &&
-            "left-0 right-0 bottom-0 max-h-[85vh] rounded-t-2xl border-t shadow-xl"
-          )}
-        >
-          <Drawer.Title className="sr-only">Detail User</Drawer.Title>
-          <Drawer.Description className="sr-only">
-            Detail informasi pengguna sistem E-Raport
-          </Drawer.Description>
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[88vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          Detail User — {user?.full_name ?? ""}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Detail informasi pengguna sistem E-Raport beserta tombol aksi
+        </SheetDescription>
 
-          {!isDesktop && (
-            <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
-          )}
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
 
-          {user && (
-            <DrawerBody
-              user={user}
-              onClose={onClose}
-              onEdit={() => onEdit(user)}
-              onResetPw={() => onResetPw(user)}
-            />
-          )}
-        </Drawer.Content>
-      </Drawer.Portal>
-    </Drawer.Root>
+        {user && (
+          <UserDetailBody
+            user={user}
+            onClose={onClose}
+            onEdit={() => onEdit(user)}
+            onResetPw={() => onResetPw(user)}
+          />
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 
-function DrawerBody({
+function UserDetailBody({
   user,
   onClose,
   onEdit,
@@ -654,8 +620,7 @@ function DrawerBody({
 }) {
   return (
     <>
-      {/* Header */}
-      <div className="flex items-start gap-3 border-b px-4 py-4 sm:px-5">
+      <div className="flex items-start gap-3 border-b px-4 py-4 sm:px-5 pr-12">
         <div
           className={cn(
             "w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0",
@@ -669,7 +634,7 @@ function DrawerBody({
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <h3 className="text-base font-semibold leading-tight">
+          <h3 className="text-base font-semibold leading-tight truncate">
             {user.full_name}
           </h3>
           <p className="text-xs text-muted-foreground truncate mt-0.5">
@@ -705,18 +670,8 @@ function DrawerBody({
             )}
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 flex-shrink-0"
-          onClick={onClose}
-          aria-label="Tutup"
-        >
-          <X className="h-4 w-4" />
-        </Button>
       </div>
 
-      {/* Body — info rows */}
       <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-3">
         <InfoRow icon={Mail} label="Email" value={user.email ?? "—"} />
         <InfoRow icon={Phone} label="Telepon" value={user.phone ?? "—"} />
@@ -736,7 +691,6 @@ function DrawerBody({
         />
       </div>
 
-      {/* Footer — Tutup + Reset PW + Edit shortcut */}
       <div className="border-t bg-background px-4 py-3 sm:px-5 flex flex-wrap gap-2">
         <Button
           variant="outline"
@@ -793,16 +747,17 @@ function InfoRow({
 }
 
 // ============================================================
-// AddUserDialog — preserved
+// AddUserSheet
 // ============================================================
 
-function AddUserDialog({
+function AddUserSheet({
   open,
   onOpenChange,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
+  const isDesktop = useIsDesktop();
   const create = useCreateUser();
   const [showPw, setShowPw] = useState(false);
 
@@ -827,178 +782,224 @@ function AddUserDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Tambah Pengguna</DialogTitle>
-          <DialogDescription>
-            Akun akan langsung aktif. Share password ke user secara manual.
-          </DialogDescription>
-        </DialogHeader>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[92vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">Tambah Pengguna</SheetTitle>
+        <SheetDescription className="sr-only">
+          Form untuk membuat akun pengguna baru di sistem E-Raport
+        </SheetDescription>
+
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
+
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
-            <FormField
-              control={form.control}
-              name="full_name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Nama Lengkap <span className="text-destructive">*</span>
-                  </FormLabel>
-                  <FormControl>
-                    <Input placeholder="Nama lengkap" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Email <span className="text-destructive">*</span>
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      type="email"
-                      placeholder="email@pkbm.com"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="password"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Password Awal <span className="text-destructive">*</span>
-                  </FormLabel>
-                  <FormControl>
-                    <div className="relative">
-                      <Input
-                        type={showPw ? "text" : "password"}
-                        placeholder="Min. 6 karakter"
-                        className="pr-10"
-                        {...field}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPw((v) => !v)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        tabIndex={-1}
-                      >
-                        {showPw ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className="grid grid-cols-2 gap-3">
+          <form
+            onSubmit={form.handleSubmit(onSubmit)}
+            className="flex flex-1 flex-col min-h-0"
+          >
+            <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+                <UserPlus className="h-4 w-4 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                  Tambah Pengguna
+                </p>
+                <h3 className="text-base font-semibold leading-tight mt-0.5">
+                  Akun Baru
+                </h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Akun langsung aktif. Share password ke user manual.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-3">
               <FormField
                 control={form.control}
-                name="role"
+                name="full_name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Role</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="user">User</SelectItem>
-                        <SelectItem value="super_admin">Super Admin</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <FormLabel>
+                      Nama Lengkap <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <FormControl>
+                      <Input placeholder="Nama lengkap" {...field} />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
               <FormField
                 control={form.control}
-                name="phone"
+                name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Telepon</FormLabel>
+                    <FormLabel>
+                      Email <span className="text-destructive">*</span>
+                    </FormLabel>
                     <FormControl>
                       <Input
-                        placeholder="Opsional"
+                        type="email"
+                        placeholder="email@pkbm.com"
                         {...field}
-                        value={field.value ?? ""}
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>
+                      Password Awal{" "}
+                      <span className="text-destructive">*</span>
+                    </FormLabel>
+                    <FormControl>
+                      <div className="relative">
+                        <Input
+                          type={showPw ? "text" : "password"}
+                          placeholder="Min. 6 karakter"
+                          className="pr-10"
+                          {...field}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPw((v) => !v)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          tabIndex={-1}
+                        >
+                          {showPw ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <FormField
+                  control={form.control}
+                  name="role"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Role</FormLabel>
+                      <Select
+                        onValueChange={field.onChange}
+                        value={field.value}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="user">User</SelectItem>
+                          <SelectItem value="super_admin">
+                            Super Admin
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Telepon</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Opsional"
+                          {...field}
+                          value={field.value ?? ""}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
             </div>
 
-            <DialogFooter>
+            <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 onClick={() => onOpenChange(false)}
                 disabled={create.isPending}
+                className="flex-1"
               >
                 Batal
               </Button>
-              <Button type="submit" disabled={create.isPending}>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={create.isPending}
+                className="flex-1 gap-1.5"
+              >
                 {create.isPending && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 )}
                 Tambah
               </Button>
-            </DialogFooter>
+            </div>
           </form>
         </Form>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }
 
 // ============================================================
-// EditUserDialog — preserved
+// EditUserSheet
 // ============================================================
 
-function EditUserDialog({
+function EditUserSheet({
   user,
   onClose,
 }: {
   user: AdminUser | null;
   onClose: () => void;
 }) {
+  const isDesktop = useIsDesktop();
   const update = useUpdateUser();
   const currentUser = useAuthStore((s) => s.user);
   const isSelf = currentUser?.id === user?.id;
+  const open = user !== null;
 
   const form = useForm<UserUpdateFormData>({
     resolver: typedResolver(userUpdateSchema),
     values: user
       ? {
-        full_name: user.full_name,
-        role: user.role as "super_admin" | "user",
-        phone: user.phone ?? "",
-        is_active: user.is_active,
-      }
+          full_name: user.full_name,
+          role: user.role as "super_admin" | "user",
+          phone: user.phone ?? "",
+          is_active: user.is_active,
+        }
       : undefined,
   });
 
-  if (!user) return null;
-
   const onSubmit = (values: UserUpdateFormData) => {
+    if (!user) return;
     update.mutate(
       { id: user.id, values },
       { onSuccess: () => onClose() }
@@ -1006,149 +1007,201 @@ function EditUserDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Edit {user.full_name}</DialogTitle>
-          <DialogDescription>
-            Email <span className="font-mono">{user.email}</span> tidak dapat
-            diubah.
-          </DialogDescription>
-        </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
-            <FormField
-              control={form.control}
-              name="full_name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Nama Lengkap <span className="text-destructive">*</span>
-                  </FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className="grid grid-cols-2 gap-3">
-              <FormField
-                control={form.control}
-                name="role"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Role</FormLabel>
-                    <Select
-                      onValueChange={field.onChange}
-                      value={field.value}
-                      disabled={isSelf}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="user">User</SelectItem>
-                        <SelectItem value="super_admin">Super Admin</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {isSelf && (
-                      <p className="text-[10px] text-muted-foreground">
-                        Tidak dapat ubah role sendiri
-                      </p>
-                    )}
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="phone"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Telepon</FormLabel>
-                    <FormControl>
-                      <Input {...field} value={field.value ?? ""} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-            <FormField
-              control={form.control}
-              name="is_active"
-              render={({ field }) => (
-                <FormItem>
-                  <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                    <FormLabel className="cursor-pointer">
-                      Akun Aktif
-                      {isSelf && (
-                        <span className="block text-[10px] text-muted-foreground">
-                          Tidak dapat nonaktifkan akun sendiri
-                        </span>
-                      )}
-                    </FormLabel>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                        disabled={isSelf}
-                      />
-                    </FormControl>
-                  </div>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+    <Sheet
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) onClose();
+      }}
+    >
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[92vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          Edit User — {user?.full_name ?? ""}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Form untuk mengedit profil user (nama, role, phone, status aktif)
+        </SheetDescription>
 
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onClose}
-                disabled={update.isPending}
-              >
-                Batal
-              </Button>
-              <Button type="submit" disabled={update.isPending}>
-                {update.isPending && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                Simpan
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
+
+        {user && (
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit(onSubmit)}
+              className="flex flex-1 flex-col min-h-0"
+            >
+              <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+                  <Pencil className="h-4 w-4 text-primary" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                    Edit User
+                  </p>
+                  <h3 className="text-base font-semibold leading-tight mt-0.5 truncate">
+                    {user.full_name}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                    Email <span className="font-mono">{user.email}</span> tidak
+                    dapat diubah
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-3">
+                <FormField
+                  control={form.control}
+                  name="full_name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Nama Lengkap{" "}
+                        <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <FormControl>
+                        <Input {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField
+                    control={form.control}
+                    name="role"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Role</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value}
+                          disabled={isSelf}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="user">User</SelectItem>
+                            <SelectItem value="super_admin">
+                              Super Admin
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {isSelf && (
+                          <p className="text-[10px] text-muted-foreground">
+                            Tidak dapat ubah role sendiri
+                          </p>
+                        )}
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="phone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Telepon</FormLabel>
+                        <FormControl>
+                          <Input {...field} value={field.value ?? ""} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name="is_active"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                        <FormLabel className="cursor-pointer">
+                          Akun Aktif
+                          {isSelf && (
+                            <span className="block text-[10px] text-muted-foreground">
+                              Tidak dapat nonaktifkan akun sendiri
+                            </span>
+                          )}
+                        </FormLabel>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            disabled={isSelf}
+                          />
+                        </FormControl>
+                      </div>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onClose}
+                  disabled={update.isPending}
+                  className="flex-1"
+                >
+                  Batal
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={update.isPending}
+                  className="flex-1 gap-1.5"
+                >
+                  {update.isPending && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  )}
+                  Simpan
+                </Button>
+              </div>
+            </form>
+          </Form>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 
 // ============================================================
-// ResetPasswordDialog — preserved
+// ResetPasswordSheet
 // ============================================================
 
-function ResetPasswordDialog({
+function ResetPasswordSheet({
   user,
   onClose,
 }: {
   user: AdminUser | null;
   onClose: () => void;
 }) {
+  const isDesktop = useIsDesktop();
   const reset = useResetUserPassword();
   const [showPw, setShowPw] = useState(false);
+  const open = user !== null;
 
   const form = useForm<UserResetPasswordFormData>({
     resolver: typedResolver(userResetPasswordSchema),
     defaultValues: { password: "" },
   });
 
-  if (!user) return null;
-
   const onSubmit = (values: UserResetPasswordFormData) => {
+    if (!user) return;
     reset.mutate(
       { id: user.id, values },
       {
@@ -1161,73 +1214,127 @@ function ResetPasswordDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Reset Password</DialogTitle>
-          <DialogDescription>
-            Set password baru untuk{" "}
-            <span className="font-semibold">{user.full_name}</span>. Share ke
-            user secara manual.
-          </DialogDescription>
-        </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
-            <FormField
-              control={form.control}
-              name="password"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    Password Baru <span className="text-destructive">*</span>
-                  </FormLabel>
-                  <FormControl>
-                    <div className="relative">
-                      <Input
-                        type={showPw ? "text" : "password"}
-                        placeholder="Min. 6 karakter"
-                        className="pr-10"
-                        autoFocus
-                        {...field}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPw((v) => !v)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        tabIndex={-1}
-                      >
-                        {showPw ? (
-                          <EyeOff className="h-4 w-4" />
-                        ) : (
-                          <Eye className="h-4 w-4" />
-                        )}
-                      </button>
-                    </div>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+    <Sheet
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) onClose();
+      }}
+    >
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[92vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          Reset Password — {user?.full_name ?? ""}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Form untuk reset password user. Share password baru ke user secara
+          manual.
+        </SheetDescription>
 
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onClose}
-                disabled={reset.isPending}
-              >
-                Batal
-              </Button>
-              <Button type="submit" disabled={reset.isPending}>
-                {reset.isPending && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                Reset Password
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
+
+        {user && (
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit(onSubmit)}
+              className="flex flex-1 flex-col min-h-0"
+            >
+              <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+                  <Key className="h-4 w-4 text-primary" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                    Reset Password
+                  </p>
+                  <h3 className="text-base font-semibold leading-tight mt-0.5 truncate">
+                    {user.full_name}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Set password baru. Share ke user secara manual.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-3">
+                <FormField
+                  control={form.control}
+                  name="password"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Password Baru{" "}
+                        <span className="text-destructive">*</span>
+                      </FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Input
+                            type={showPw ? "text" : "password"}
+                            placeholder="Min. 6 karakter"
+                            className="pr-10"
+                            autoFocus
+                            {...field}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPw((v) => !v)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                            tabIndex={-1}
+                          >
+                            {showPw ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <div className="rounded-lg border bg-amber-50/60 border-amber-200 p-3 text-xs text-amber-900">
+                  💡 Setelah reset, share password baru ke user secara manual
+                  (misal via WhatsApp). Sistem tidak mengirim notifikasi
+                  otomatis.
+                </div>
+              </div>
+
+              <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onClose}
+                  disabled={reset.isPending}
+                  className="flex-1"
+                >
+                  Batal
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={reset.isPending}
+                  className="flex-1 gap-1.5"
+                >
+                  {reset.isPending && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  )}
+                  Reset Password
+                </Button>
+              </div>
+            </form>
+          </Form>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }

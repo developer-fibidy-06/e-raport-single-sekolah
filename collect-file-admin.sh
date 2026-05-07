@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ================================================
-# E-RAPORT ADMIN FEATURE COLLECTOR v1
+# E-RAPORT ADMIN FEATURE COLLECTOR v3
 # ================================================
 # FOKUS: Hanya fitur Admin (Master Data, Akademik, Sistem)
 #
@@ -13,6 +13,7 @@
 #   - Lib pendukung admin (auth-guard, validators, utils)
 #   - Supabase admin client + server client + proxy
 #   - Types, constants, stores yang terpakai admin
+#   - Public assets admin (CSV template import siswa)
 #
 # SKIP:
 #   - components/ui/* (shadcn)
@@ -103,6 +104,12 @@ collect_file() {
 }
 
 # ================================================
+# 📄 PUBLIC ASSETS (CSV template import siswa)
+# ================================================
+section "📄" "PUBLIC ASSETS"
+collect_file "$WORKSPACE_ROOT/public/import/peserta-didik.csv"
+
+# ================================================
 # 🏠 ADMIN ENTRY PAGE
 # ================================================
 section "🏠" "ADMIN ENTRY PAGE"
@@ -143,6 +150,7 @@ collect_file "$SRC/hooks/use-satuan-pendidikan.ts"
 collect_file "$SRC/hooks/use-tahun-pelajaran.ts"
 collect_file "$SRC/hooks/use-kelas.ts"
 collect_file "$SRC/hooks/use-siswa.ts"
+collect_file "$SRC/hooks/use-siswa-deletion-impact.ts"
 collect_file "$SRC/hooks/use-enrollment.ts"
 collect_file "$SRC/hooks/use-mata-pelajaran.ts"
 collect_file "$SRC/hooks/use-kompetensi.ts"

@@ -1,37 +1,79 @@
 // ============================================================
 // FILE PATH: src/components/features/admin/tab-tahun-kelas.tsx
 // ============================================================
-// REPLACE. v2.5 — smart confirm dialog hapus kelas.
+// REPLACE. v2.7 — migrasi Modal/Dialog → Sheet pattern (lengkap).
 //
-// CHANGELOG vs versi sebelumnya:
+// CHANGELOG vs v2.5:
 //
-//   1. Imports: TAMBAH useKelasDeletionImpact, AlertDialog primitives,
-//      AlertTriangle icon.
+//   1. KelolaKelasDrawer (vaul Drawer) → KelolaKelasSheet
+//      Ganti pakai shadcn `Sheet` (Radix Dialog wrapper). Visual
+//      sama-sama side panel di desktop & bottom sheet di mobile,
+//      tapi pakai primitive shadcn yang konsisten dengan sisa
+//      codebase (no more import vaul di file ini).
 //
-//   2. Confirm hapus kelas: GANTI dari ConfirmDialog generik (yang
-//      cuma kasih copy "semua siswa dan nilai akan ikut terhapus")
-//      jadi DeleteKelasConfirm — komponen baru yang:
-//        - Pre-fetch impact count via useKelasDeletionImpact
-//        - Tampilkan jumlah enrollment + nilai + rapor published
-//        - Warna severity:
-//          • Hijau / muted: kelas kosong, aman
-//          • Amber: ada enrollment + nilai (CASCADE warning)
-//          • Rose: ada rapor published (extra warning + ring tebal)
-//        - Tombol confirm nampilkan jumlah yang bakal kena
+//   2. TambahKelasDialog (Dialog modal) → TambahKelasSheet
+//      Ganti dari modal di tengah jadi side-sheet kanan (desktop)
+//      / bottom-sheet (mobile). Lebih sesuai untuk workflow yang
+//      panjang (form 4 field) ketimbang interrupt-style modal.
 //
-//   3. ConfirmDialog dari @/components/shared masih dipake untuk
-//      "Confirm hapus tahun" — TIDAK BERUBAH.
+//   3. EditKelasDialog (Dialog modal) → EditKelasSheet
+//      Same treatment.
 //
-// SEMUA logic existing (hooks, KelolaKelasDrawer, TambahKelasDialog,
-// EditKelasDialog, EnrollmentDialog, KELAS_PARALEL_VALUES,
-// buildNamaKelas helper, TanggalCetakGlobalWarning, dll) PRESERVED.
+//   4. EnrollmentDialog (Dialog modal) → EnrollmentSheet  [v2.7]
+//      Kelola siswa (3 tab terdaftar/existing/baru) sekarang juga
+//      pakai Sheet. Inner ConfirmKeluarDialog (konfirmasi
+//      keluarkan/pindah/lulus siswa) TETEP Dialog modal — sesuai
+//      filosofi: modal khusus untuk konfirmasi destruktif.
+//      File baru: enrollment-sheet.tsx (replaces enrollment-dialog.tsx).
+//
+//   5. STACKING — kunci UX yang diminta user:
+//      - SEMUA sheet (parent KelolaKelas + child Tambah/Edit + child
+//        Enrollment) pakai width seragam `sm:max-w-xl` (576px) di
+//        desktop. [v2.7 final — request user]
+//      - Saat child Sheet open, parent Sheet TETAP open di belakang
+//        (state independen). Child fully overlap parent secara visual,
+//        tapi stacking tetep terbukti via:
+//          • Radix overlay (dimming layer terpisah per Sheet)
+//          • Slide-in animation (child slide masuk dari kanan/bawah)
+//          • Z-index otomatis via portal mount order
+//      - Tekan Batal / submit success → child Sheet close,
+//        parent Sheet stay → user balik ke daftar kelas tanpa
+//        kehilangan konteks. Sesuai prinsip:
+//        "modal cuma untuk dialog delete, sisanya pakai sheet".
+//      - Triple stacking saat Keluarkan siswa: parent KelolaKelasSheet
+//        → child EnrollmentSheet → ConfirmKeluarDialog (modal). Radix
+//        handle z-index via portal mount order otomatis.
+//      - Escape: tutup yang paling atas dulu (Radix default).
+//
+//   6. PRESERVED:
+//      - Semua hooks (useTahunPelajaran, useKelasByTahun, useCreateKelas,
+//        useUpdateKelas, useDeleteKelas, useKelasDeletionImpact, dll)
+//      - Tahun creation form di toolbar atas
+//      - Table tahun pelajaran + kebab menu
+//      - DeleteKelasConfirm (AlertDialog) — modal untuk delete OK
+//      - ConfirmDialog hapus tahun — modal untuk delete OK
+//      - TanggalCetakGlobalWarning + TanggalCetakRowBadge
+//      - TanggalCetakPaketForm di body parent sheet
+//      - KelasItem (row di parent sheet body): inline Kelola Siswa
+//        button + Edit + Delete icons
+//      - Form schema, validation, auto-build nama_kelas, hint paralel,
+//        preview nama_kelas, useEffect sync
+//      - useIsDesktop responsive helper (right side desktop / bottom
+//        sheet mobile)
+//
+//   7. REMOVED imports:
+//      - vaul (Drawer.Root, Drawer.Content, dst) — tidak dipakai lagi
+//      - Dialog primitives (Dialog, DialogContent, DialogHeader, dst)
+//        sudah tidak dipakai di file ini
+//
+//   8. NOTE: file `enrollment-dialog.tsx` lama bisa dihapus setelah
+//      file ini di-replace. Sudah tidak ada yang import dari sana.
 // ============================================================
 
 "use client";
 
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
-import { Drawer } from "vaul";
 import {
   tahunPelajaranSchema,
   rombonganBelajarSchema,
@@ -70,12 +112,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
@@ -112,12 +153,11 @@ import {
   Pencil,
   UserCircle,
   MoreHorizontal,
-  X,
   Calendar,
   AlertTriangle,
 } from "lucide-react";
 import type { TahunPelajaran, RombonganBelajar } from "@/types";
-import { EnrollmentDialog } from "./enrollment-dialog";
+import { EnrollmentSheet } from "./enrollment-sheet";
 import { cn } from "@/lib/utils";
 
 // ── v2.4: integrasi tanggal cetak per paket ──
@@ -139,10 +179,6 @@ const FASE_OPTIONS = [
 
 // ────────────────────────────────────────────────────────────
 // Helper: build nama_kelas dari tingkat + paralel.
-// Convention:
-//   paralel="Tidak ada" → "Kelas 12"   (no suffix)
-//   paralel="A"         → "Kelas 12A"  (compact, no space)
-//   paralel="B"         → "Kelas 12B"
 // ────────────────────────────────────────────────────────────
 function buildNamaKelas(tingkat: number, paralel: string): string {
   const suffix = paralel === "Tidak ada" ? "" : paralel;
@@ -178,7 +214,7 @@ export function TabTahunKelas() {
 
   return (
     <div className="space-y-4">
-      {/* Top toolbar — form tambah tahun, no heading no Card */}
+      {/* Top toolbar — form tambah tahun */}
       <Form {...tahunForm}>
         <form
           onSubmit={tahunForm.handleSubmit(onAddTahun)}
@@ -236,7 +272,7 @@ export function TabTahunKelas() {
       </Form>
 
       {/* v2.4: Banner warning global — muncul kalau ada TP × paket
-          yang missing tanggal cetak. Self-contained, fetch sendiri. */}
+          yang missing tanggal cetak. */}
       <TanggalCetakGlobalWarning />
 
       {/* Table tahun pelajaran */}
@@ -272,7 +308,7 @@ export function TabTahunKelas() {
                   tahun={tp}
                   index={idx + 1}
                   isSettingAktif={setAktif.isPending}
-                  onOpenDrawer={() => setDrawerTahun(tp)}
+                  onOpenSheet={() => setDrawerTahun(tp)}
                   onSetAktif={() => setAktif.mutate(tp.id)}
                   onDelete={() => setShowDeleteTahun(tp.id)}
                 />
@@ -282,8 +318,8 @@ export function TabTahunKelas() {
         </div>
       )}
 
-      {/* Drawer kelola kelas */}
-      <KelolaKelasDrawer
+      {/* ─── PARENT SHEET — Kelola Kelas ─────────────────────── */}
+      <KelolaKelasSheet
         tahun={drawerTahun}
         onClose={() => setDrawerTahun(null)}
         onAddKelas={() => setShowAddKelas(true)}
@@ -292,19 +328,20 @@ export function TabTahunKelas() {
         onManageSiswa={setManageKelas}
       />
 
-      {/* Dialog tambah kelas */}
-      <TambahKelasDialog
+      {/* ─── CHILD SHEET — Tambah Kelas (di atas parent) ────── */}
+      <TambahKelasSheet
         open={showAddKelas}
         onOpenChange={setShowAddKelas}
         tahun={drawerTahun}
       />
 
-      {/* Dialog edit kelas */}
-      {editKelas && (
-        <EditKelasDialog kelas={editKelas} onClose={() => setEditKelas(null)} />
-      )}
+      {/* ─── CHILD SHEET — Edit Kelas (di atas parent) ──────── */}
+      <EditKelasSheet
+        kelas={editKelas}
+        onClose={() => setEditKelas(null)}
+      />
 
-      {/* Confirm hapus tahun — pakai ConfirmDialog generik */}
+      {/* ─── MODAL — Confirm hapus tahun ─────────────────────── */}
       <ConfirmDialog
         open={!!showDeleteTahun}
         onOpenChange={() => setShowDeleteTahun(null)}
@@ -324,7 +361,7 @@ export function TabTahunKelas() {
         }}
       />
 
-      {/* v2.5: Confirm hapus kelas — smart impact preview */}
+      {/* ─── MODAL — Confirm hapus kelas (smart impact preview) ─ */}
       {showDeleteKelas !== null && (
         <DeleteKelasConfirm
           kelasId={showDeleteKelas}
@@ -338,36 +375,31 @@ export function TabTahunKelas() {
         />
       )}
 
-      {/* Enrollment (kelola siswa) */}
-      {manageKelas && (
-        <EnrollmentDialog
-          open
-          onOpenChange={(v) => !v && setManageKelas(null)}
-          kelas={{
-            id: manageKelas.id,
-            nama_kelas: manageKelas.nama_kelas,
-            paket: manageKelas.paket,
-            fase: manageKelas.fase,
-            tahun_pelajaran_id: manageKelas.tahun_pelajaran_id,
-          }}
-        />
-      )}
+      {/* ─── CHILD SHEET — Enrollment (kelola siswa) ──────────── */}
+      {/* v2.7: Subflow 3 tab (terdaftar/existing/baru) sekarang juga
+          pakai Sheet (sebelumnya Dialog modal). Width sm:max-w-xl
+          (576px) — seragam dengan parent + Tambah/Edit child. Inner
+          ConfirmKeluarDialog tetep modal (delete confirmation OK). */}
+      <EnrollmentSheet
+        kelas={
+          manageKelas
+            ? {
+                id: manageKelas.id,
+                nama_kelas: manageKelas.nama_kelas,
+                paket: manageKelas.paket,
+                fase: manageKelas.fase,
+                tahun_pelajaran_id: manageKelas.tahun_pelajaran_id,
+              }
+            : null
+        }
+        onClose={() => setManageKelas(null)}
+      />
     </div>
   );
 }
 
 // ============================================================
-// DeleteKelasConfirm — v2.5
-// ============================================================
-// Smart confirm dialog dengan impact pre-fetch:
-//   - Loading state saat fetch impact count
-//   - Empty state (kelas kosong) → muted, copy "Aman untuk dihapus"
-//   - Has data state → amber warning dengan list count
-//   - Has published rapor → rose warning + ring tebal di tombol
-//
-// Tombol confirm dynamic:
-//   - Empty: "Hapus"
-//   - Has enrollment: "Hapus kelas + N enrollment"
+// DeleteKelasConfirm — AlertDialog (modal untuk delete = OK)
 // ============================================================
 
 function DeleteKelasConfirm({
@@ -509,26 +541,25 @@ function DeleteKelasConfirm({
 
 // ============================================================
 // TahunTableRow — single row dengan kebab menu
-// v2.4: tambah TanggalCetakRowBadge di kolom utama
 // ============================================================
 
 function TahunTableRow({
   tahun,
   index,
   isSettingAktif,
-  onOpenDrawer,
+  onOpenSheet,
   onSetAktif,
   onDelete,
 }: {
   tahun: TahunPelajaran;
   index: number;
   isSettingAktif: boolean;
-  onOpenDrawer: () => void;
+  onOpenSheet: () => void;
   onSetAktif: () => void;
   onDelete: () => void;
 }) {
   return (
-    <TableRow onClick={onOpenDrawer} className="cursor-pointer">
+    <TableRow onClick={onOpenSheet} className="cursor-pointer">
       <TableCell className="w-12 px-3 py-2.5 text-xs text-muted-foreground tabular-nums font-mono">
         {index}.
       </TableCell>
@@ -596,10 +627,15 @@ function TahunTableRow({
 }
 
 // ============================================================
-// KelolaKelasDrawer — vaul responsive direction
+// KelolaKelasSheet — PARENT SHEET (replaces vaul Drawer)
+// ============================================================
+// shadcn Sheet wrapper. Side responsive: kanan di desktop, bawah
+// di mobile. Width `sm:max-w-xl` (576px) — seragam dengan semua
+// child Sheet (Tambah/Edit/Enrollment). Stacking via Radix portal
+// mount order + overlay layer.
 // ============================================================
 
-function KelolaKelasDrawer({
+function KelolaKelasSheet({
   tahun,
   onClose,
   onAddKelas,
@@ -615,58 +651,54 @@ function KelolaKelasDrawer({
   onManageSiswa: (k: RombonganBelajar) => void;
 }) {
   const isDesktop = useIsDesktop();
-  const direction = isDesktop ? "right" : "bottom";
   const open = tahun !== null;
 
   return (
-    <Drawer.Root
+    <Sheet
       open={open}
       onOpenChange={(v) => {
         if (!v) onClose();
       }}
-      direction={direction}
     >
-      <Drawer.Portal>
-        <Drawer.Overlay className="fixed inset-0 z-50 bg-black/40" />
-        <Drawer.Content
-          className={cn(
-            "fixed z-50 flex flex-col bg-background outline-none",
-            isDesktop &&
-            "right-0 top-0 bottom-0 w-full max-w-xl border-l shadow-xl",
-            !isDesktop &&
-            "left-0 right-0 bottom-0 max-h-[85vh] rounded-t-2xl border-t shadow-xl"
-          )}
-        >
-          <Drawer.Title className="sr-only">Kelola Kelas</Drawer.Title>
-          <Drawer.Description className="sr-only">
-            Kelola daftar kelas untuk tahun pelajaran ini
-          </Drawer.Description>
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[88vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          Kelola Kelas — {tahun?.nama ?? ""}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Kelola daftar kelas dan tanggal cetak rapor untuk tahun pelajaran ini
+        </SheetDescription>
 
-          {!isDesktop && (
-            <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
-          )}
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
 
-          {tahun && (
-            <DrawerBody
-              tahun={tahun}
-              onClose={onClose}
-              onAddKelas={onAddKelas}
-              onEditKelas={onEditKelas}
-              onDeleteKelas={onDeleteKelas}
-              onManageSiswa={onManageSiswa}
-            />
-          )}
-        </Drawer.Content>
-      </Drawer.Portal>
-    </Drawer.Root>
+        {tahun && (
+          <KelolaKelasSheetBody
+            tahun={tahun}
+            onClose={onClose}
+            onAddKelas={onAddKelas}
+            onEditKelas={onEditKelas}
+            onDeleteKelas={onDeleteKelas}
+            onManageSiswa={onManageSiswa}
+          />
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 
 // ============================================================
-// DrawerBody — v2.4: tambah section Tanggal Cetak Rapor di body
+// KelolaKelasSheetBody — header + body (scroll) + footer (sticky)
 // ============================================================
 
-function DrawerBody({
+function KelolaKelasSheetBody({
   tahun,
   onClose,
   onAddKelas,
@@ -685,8 +717,8 @@ function DrawerBody({
 
   return (
     <>
-      {/* Header */}
-      <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5">
+      {/* Header — pr-12 supaya tidak ketabrak tombol X auto Sheet */}
+      <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
           <Calendar className="h-4 w-4 text-primary" />
         </div>
@@ -711,15 +743,6 @@ function DrawerBody({
             </span>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 flex-shrink-0"
-          onClick={onClose}
-          aria-label="Tutup"
-        >
-          <X className="h-4 w-4" />
-        </Button>
       </div>
 
       {/* Body — section tanggal cetak + list kelas */}
@@ -738,7 +761,7 @@ function DrawerBody({
 
         <div className="border-t" />
 
-        {/* Daftar kelas — existing logic */}
+        {/* Daftar kelas */}
         <section className="space-y-2">
           <div>
             <h4 className="text-sm font-semibold">Daftar Kelas</h4>
@@ -796,7 +819,7 @@ function DrawerBody({
 }
 
 // ============================================================
-// KelasItem — 1 row kelas di drawer body, inline action icons
+// KelasItem — 1 row kelas di parent sheet body, inline action icons
 // ============================================================
 
 function KelasItem({
@@ -863,10 +886,19 @@ function KelasItem({
 }
 
 // ============================================================
-// TambahKelasDialog — form add kelas dengan support paralel "Tidak ada"
+// TambahKelasSheet — CHILD SHEET (replaces TambahKelasDialog)
+// ============================================================
+// Slide-in dari kanan (desktop) / bawah (mobile) di atas parent
+// Sheet. Width `sm:max-w-xl` — seragam dengan parent. Child fully
+// overlap parent, tapi stacking tetep terbukti via Radix overlay
+// + slide animation + portal z-index.
+//
+// Batal / submit success → onOpenChange(false) → cuma child Sheet
+// yang close, parent Sheet TETAP open. User balik ke daftar
+// kelas tanpa kehilangan konteks.
 // ============================================================
 
-function TambahKelasDialog({
+function TambahKelasSheet({
   open,
   onOpenChange,
   tahun,
@@ -875,6 +907,7 @@ function TambahKelasDialog({
   onOpenChange: (v: boolean) => void;
   tahun: TahunPelajaran | null;
 }) {
+  const isDesktop = useIsDesktop();
   const createKelas = useCreateKelas();
 
   const form = useForm<RombonganBelajarFormData>({
@@ -890,7 +923,7 @@ function TambahKelasDialog({
     },
   });
 
-  // Sync tahun_pelajaran_id setiap dialog dibuka untuk tahun berbeda
+  // Sync tahun_pelajaran_id setiap sheet dibuka untuk tahun berbeda
   useEffect(() => {
     if (tahun) {
       form.setValue("tahun_pelajaran_id", tahun.id);
@@ -930,212 +963,286 @@ function TambahKelasDialog({
     );
   };
 
-  if (!tahun) return null;
+  // Kalau parent close & tahun jadi null, jangan render sheet content.
+  // Tapi <Sheet open={false}> tetap aman dirender → no-op visual.
+  if (!tahun) {
+    return (
+      <Sheet open={false} onOpenChange={() => {}}>
+        <SheetContent className="hidden">
+          <SheetTitle className="sr-only">Tambah Kelas</SheetTitle>
+        </SheetContent>
+      </Sheet>
+    );
+  }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
-            Tambah Kelas — {tahun.nama} Semester {tahun.semester}
-          </DialogTitle>
-        </DialogHeader>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[92vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          Tambah Kelas — {tahun.nama} Semester {tahun.semester}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Form untuk menambahkan kelas baru ke tahun pelajaran ini
+        </SheetDescription>
+
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
+
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
-            <div className="grid gap-2 sm:grid-cols-4">
-              <FormField
-                control={form.control}
-                name="tingkat"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-xs">Tingkat</FormLabel>
-                    <Select
-                      onValueChange={(v) => field.onChange(Number(v))}
-                      value={String(field.value)}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {Array.from({ length: 12 }, (_, i) => i + 1).map(
-                          (n) => (
-                            <SelectItem key={n} value={String(n)}>
-                              Kelas {n}
+          <form
+            onSubmit={form.handleSubmit(onSubmit)}
+            className="flex flex-1 flex-col min-h-0"
+          >
+            {/* Header */}
+            <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+                <Plus className="h-4 w-4 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                  Tambah Kelas Baru
+                </p>
+                <h3 className="text-base font-semibold leading-tight mt-0.5 truncate">
+                  {tahun.nama} Semester {tahun.semester}
+                </h3>
+              </div>
+            </div>
+
+            {/* Body — scrollable */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-3">
+              <div className="grid gap-2 grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="tingkat"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Tingkat</FormLabel>
+                      <Select
+                        onValueChange={(v) => field.onChange(Number(v))}
+                        value={String(field.value)}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {Array.from({ length: 12 }, (_, i) => i + 1).map(
+                            (n) => (
+                              <SelectItem key={n} value={String(n)}>
+                                Kelas {n}
+                              </SelectItem>
+                            )
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="kelas_paralel"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Paralel</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {KELAS_PARALEL_VALUES.map((p) => (
+                            <SelectItem key={p} value={p}>
+                              {p}
                             </SelectItem>
-                          )
-                        )}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="paket"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Paket</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {PAKET_OPTIONS.map((p) => (
+                            <SelectItem key={p} value={p}>
+                              {p}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="fase"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs">Fase</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {FASE_OPTIONS.map((f) => (
+                            <SelectItem key={f} value={f}>
+                              {f}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              {/* Hint paralel */}
+              <p className="text-[11px] text-muted-foreground">
+                <strong>Tip Paralel:</strong> Pilih{" "}
+                <span className="font-mono">&quot;Tidak ada&quot;</span> kalau
+                tingkat ini cuma 1 kelas (mayoritas PKBM kecil). Pilih{" "}
+                <span className="font-mono">A/B</span> kalau perlu split jadi 2
+                kelas paralel (misal murid 25+).
+              </p>
+
               <FormField
                 control={form.control}
-                name="kelas_paralel"
+                name="wali_kelas"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="text-xs">Paralel</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {KELAS_PARALEL_VALUES.map((p) => (
-                          <SelectItem key={p} value={p}>
-                            {p}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormLabel className="text-xs flex items-center gap-1">
+                      <UserCircle className="h-3 w-3" />
+                      Wali Kelas (opsional)
+                    </FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder="Contoh: WAHYU RATNA NINGRUM, S.Pd"
+                        {...field}
+                        value={field.value ?? ""}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              <FormField
-                control={form.control}
-                name="paket"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-xs">Paket</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {PAKET_OPTIONS.map((p) => (
-                          <SelectItem key={p} value={p}>
-                            {p}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="fase"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-xs">Fase</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {FASE_OPTIONS.map((f) => (
-                          <SelectItem key={f} value={f}>
-                            {f}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+
+              {/* Preview nama_kelas yang akan dibuat */}
+              <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                Nama kelas:{" "}
+                <span className="font-mono font-semibold text-foreground">
+                  {buildNamaKelas(watchTingkat, watchParalel)}
+                </span>
+              </div>
             </div>
 
-            {/* Hint paralel */}
-            <p className="text-[11px] text-muted-foreground">
-              <strong>Tip Paralel:</strong> Pilih{" "}
-              <span className="font-mono">&quot;Tidak ada&quot;</span> kalau
-              tingkat ini cuma 1 kelas (mayoritas PKBM kecil). Pilih{" "}
-              <span className="font-mono">A/B</span> kalau perlu split jadi 2
-              kelas paralel (misal murid 25+).
-            </p>
-
-            <FormField
-              control={form.control}
-              name="wali_kelas"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs flex items-center gap-1">
-                    <UserCircle className="h-3 w-3" />
-                    Wali Kelas (opsional)
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Contoh: WAHYU RATNA NINGRUM, S.Pd"
-                      {...field}
-                      value={field.value ?? ""}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* Preview nama_kelas yang akan dibuat */}
-            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              Nama kelas:{" "}
-              <span className="font-mono font-semibold text-foreground">
-                {buildNamaKelas(watchTingkat, watchParalel)}
-              </span>
-            </div>
-
-            <DialogFooter>
+            {/* Footer — sticky, gak scroll */}
+            <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 onClick={() => onOpenChange(false)}
                 disabled={createKelas.isPending}
+                className="flex-1"
               >
                 Batal
               </Button>
-              <Button type="submit" disabled={createKelas.isPending}>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={createKelas.isPending}
+                className="flex-1 gap-1.5"
+              >
                 {createKelas.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 ) : (
-                  <Plus className="h-4 w-4 mr-1" />
+                  <Plus className="h-3.5 w-3.5" />
                 )}
                 Tambah Kelas
               </Button>
-            </DialogFooter>
+            </div>
           </form>
         </Form>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }
 
 // ============================================================
-// EditKelasDialog — type cast paralel diperbaiki
+// EditKelasSheet — CHILD SHEET (replaces EditKelasDialog)
+// ============================================================
+// Sama persis pattern dengan TambahKelasSheet — slide-in di atas
+// parent. Submit success / Batal → child close, parent stay.
 // ============================================================
 
-function EditKelasDialog({
+function EditKelasSheet({
   kelas,
   onClose,
 }: {
-  kelas: RombonganBelajar;
+  kelas: RombonganBelajar | null;
   onClose: () => void;
 }) {
+  const isDesktop = useIsDesktop();
   const update = useUpdateKelas();
+  const open = kelas !== null;
 
   const form = useForm<RombonganBelajarFormData>({
     resolver: typedResolver(rombonganBelajarSchema),
     defaultValues: {
-      tahun_pelajaran_id: kelas.tahun_pelajaran_id,
-      nama_kelas: kelas.nama_kelas,
-      tingkat: kelas.tingkat,
-      kelas_paralel: kelas.kelas_paralel as RombonganBelajarFormData["kelas_paralel"],
-      paket: kelas.paket as RombonganBelajarFormData["paket"],
-      fase: kelas.fase as RombonganBelajarFormData["fase"],
-      wali_kelas: kelas.wali_kelas ?? "",
+      tahun_pelajaran_id: 0,
+      nama_kelas: "Kelas 1",
+      tingkat: 1,
+      kelas_paralel: "Tidak ada",
+      paket: "Paket A",
+      fase: "Fase A",
+      wali_kelas: "",
     },
   });
 
+  // Sync defaults setiap kali kelas berubah (saat sheet dibuka)
+  useEffect(() => {
+    if (kelas) {
+      form.reset({
+        tahun_pelajaran_id: kelas.tahun_pelajaran_id,
+        nama_kelas: kelas.nama_kelas,
+        tingkat: kelas.tingkat,
+        kelas_paralel:
+          kelas.kelas_paralel as RombonganBelajarFormData["kelas_paralel"],
+        paket: kelas.paket as RombonganBelajarFormData["paket"],
+        fase: kelas.fase as RombonganBelajarFormData["fase"],
+        wali_kelas: kelas.wali_kelas ?? "",
+      });
+    }
+  }, [kelas, form]);
+
   const onSubmit = (values: RombonganBelajarFormData) => {
+    if (!kelas) return;
     update.mutate(
       {
         id: kelas.id,
@@ -1150,97 +1257,184 @@ function EditKelasDialog({
   };
 
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit {kelas.nama_kelas}</DialogTitle>
-        </DialogHeader>
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <FormField
-                control={form.control}
-                name="paket"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-xs">Paket</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+    <Sheet
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) onClose();
+      }}
+    >
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[92vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          Edit Kelas — {kelas?.nama_kelas ?? ""}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Form untuk mengedit data kelas (paket, fase, wali kelas)
+        </SheetDescription>
+
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
+
+        {kelas && (
+          <Form {...form}>
+            <form
+              onSubmit={form.handleSubmit(onSubmit)}
+              className="flex flex-1 flex-col min-h-0"
+            >
+              {/* Header */}
+              <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+                  <Pencil className="h-4 w-4 text-primary" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                    Edit Kelas
+                  </p>
+                  <h3 className="text-base font-semibold leading-tight mt-0.5 truncate">
+                    {kelas.nama_kelas}
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Tingkat &amp; paralel tidak dapat diubah setelah kelas dibuat
+                  </p>
+                </div>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField
+                    control={form.control}
+                    name="paket"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Paket</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {PAKET_OPTIONS.map((p) => (
+                              <SelectItem key={p} value={p}>
+                                {p}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="fase"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs">Fase</FormLabel>
+                        <Select
+                          onValueChange={field.onChange}
+                          value={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {FASE_OPTIONS.map((f) => (
+                              <SelectItem key={f} value={f}>
+                                {f}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="wali_kelas"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs flex items-center gap-1">
+                        <UserCircle className="h-3 w-3" />
+                        Wali Kelas
+                      </FormLabel>
                       <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
+                        <Input
+                          placeholder="Contoh: WAHYU RATNA NINGRUM, S.Pd"
+                          {...field}
+                          value={field.value ?? ""}
+                        />
                       </FormControl>
-                      <SelectContent>
-                        {PAKET_OPTIONS.map((p) => (
-                          <SelectItem key={p} value={p}>
-                            {p}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="fase"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-xs">Fase</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {FASE_OPTIONS.map((f) => (
-                          <SelectItem key={f} value={f}>
-                            {f}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-            <FormField
-              control={form.control}
-              name="wali_kelas"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs flex items-center gap-1">
-                    <UserCircle className="h-3 w-3" />
-                    Wali Kelas
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Contoh: WAHYU RATNA NINGRUM, S.Pd"
-                      {...field}
-                      value={field.value ?? ""}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={onClose}>
-                Batal
-              </Button>
-              <Button type="submit" disabled={update.isPending}>
-                {update.isPending && (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                )}
-                Simpan
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {/* Info read-only fields */}
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground space-y-0.5">
+                  <p>
+                    Nama kelas:{" "}
+                    <span className="font-mono font-semibold text-foreground">
+                      {kelas.nama_kelas}
+                    </span>
+                  </p>
+                  <p>
+                    Tingkat:{" "}
+                    <span className="font-mono font-semibold text-foreground">
+                      {kelas.tingkat}
+                    </span>{" "}
+                    · Paralel:{" "}
+                    <span className="font-mono font-semibold text-foreground">
+                      {kelas.kelas_paralel}
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onClose}
+                  disabled={update.isPending}
+                  className="flex-1"
+                >
+                  Batal
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={update.isPending}
+                  className="flex-1 gap-1.5"
+                >
+                  {update.isPending && (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  )}
+                  Simpan
+                </Button>
+              </div>
+            </form>
+          </Form>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }

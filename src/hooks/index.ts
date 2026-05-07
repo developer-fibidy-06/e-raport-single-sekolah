@@ -1,9 +1,14 @@
 // ============================================================
 // FILE PATH: src/hooks/index.ts
 // ============================================================
-// REPLACE versi sebelumnya. Tambah export use-kelas-deletion-impact.
+// REPLACE versi sebelumnya. Tambah export use-siswa-deletion-impact
+// + 2 hook delete dari use-siswa.
 //
 // CHANGELOG:
+//   v2.6: + useDeletePesertaDidik, useBulkDeletePesertaDidik (single
+//         + bulk hard delete untuk siswa, dengan CASCADE)
+//         + useSiswaDeletionImpact, useBulkSiswaDeletionImpact
+//         + type SiswaDeletionImpact (impact pre-check buat confirm)
 //   v2.5: + useKelasDeletionImpact (pre-fetch impact count buat
 //         confirm dialog hapus kelas)
 //   v2.4: + useTanggalCetakByTP, useTanggalCetakByTPDanPaket,
@@ -35,6 +40,8 @@ export {
   usePesertaDidikById,
   useCreatePesertaDidik,
   useUpdatePesertaDidik,
+  useDeletePesertaDidik,
+  useBulkDeletePesertaDidik,
   useEnrollmentByKelas,
   useCreateEnrollment,
   useUpdateEnrollmentStatus,
@@ -149,8 +156,15 @@ export {
   type TanggalCetakRow,
 } from "./use-tanggal-cetak-paket";
 
-// ── NEW v2.5: Kelas deletion impact pre-check ───────────────
+// Kelas deletion impact pre-check (v2.5)
 export {
   useKelasDeletionImpact,
   type KelasDeletionImpact,
 } from "./use-kelas-deletion-impact";
+
+// ── NEW v2.6: Siswa deletion impact pre-check ───────────────
+export {
+  useSiswaDeletionImpact,
+  useBulkSiswaDeletionImpact,
+  type SiswaDeletionImpact,
+} from "./use-siswa-deletion-impact";

@@ -1,47 +1,58 @@
 // ============================================================
 // FILE PATH: src/components/features/admin/tab-p5-master.tsx
 // ============================================================
-// REPLACE. Major refactor — pattern List Table + Drawer dengan
-// kebab menu (MoreHorizontal) per row dimensi.
+// REPLACE. v3.0 — migrasi vaul Drawer + Dialog → shadcn Sheet.
 //
-// Filosofi:
-//   1. List view (Table) = manage row itself: edit nama/nomor
-//      atau hapus dimensi. Aksi via kebab menu — destructive
-//      diisolasi (less accidental).
-//   2. Tap row → P5DimensiDrawer kebuka — scope: kelola children.
-//      Body: accordion list elemen, expand jadi sub-elemen rows.
-//      Inline icons (Pencil + Trash) di tiap elemen + sub-elemen
-//      karena lebih sering disentuh ketimbang dimensi.
-//      Footer: tombol Tutup + Tambah Elemen.
-//   3. NativeSelect untuk filter fase di toolbar atas.
+// CHANGELOG vs versi sebelumnya:
 //
-// Yang HILANG dari versi sebelumnya:
-//   - Heading "Profil Pelajar Pancasila / Kelola 6 dimensi…"
-//   - Top-level Accordion 6 dimensi yang langsung expand inline
-//   - Trash + Pencil button untuk dimensi di list (pindah ke kebab)
-//   - shadcn Select untuk fase (diganti NativeSelect)
+//   1. P5DimensiDrawer (vaul Drawer) → P5DimensiSheet
+//      Migrate primitive vaul ke shadcn Sheet. Pattern viewer
+//      tetap dipertahankan karena dimensi adalah PARENT untuk
+//      kelola elemen + sub-elemen child.
 //
-// Yang DIPERTAHANKAN:
-//   - DimensiFormDialog, ElemenFormDialog, SubElemenFormDialog
-//   - Hooks: useP5Tree, useCreateDimensi, dst (no changes)
-//   - DeleteElemenButton, DeleteSubElemenButton (inline AlertDialog
-//     pattern), tetep dipakai di dalam drawer body
+//   2. DimensiFormDialog → DimensiFormSheet (no parent, dari
+//      toolbar [Tambah] di main tab atau row kebab Edit)
 //
-// Catatan:
-//   - Pencil + Trash di drawer (untuk elemen + sub-elemen) tetep
-//     inline icons karena drawer space terbatas dan children lebih
-//     sering disentuh. Beda treatment dari parent (dimensi di list
-//     yang pakai kebab).
-//   - Form dialogs di-lift ke parent (TabP5Master) supaya state
-//     survive drawer state changes. Pas drawer ditutup, form yang
-//     lagi open tidak ke-unmount.
+//   3. ElemenFormDialog → ElemenFormSheet (child dari
+//      P5DimensiSheet, opened dari Tambah Elemen di footer atau
+//      Pencil di accordion item)
+//
+//   4. SubElemenFormDialog (Dialog max-w-2xl) → SubElemenFormSheet
+//      (child dari P5DimensiSheet, opened dari accordion expanded
+//      item)
+//
+//   5. STACKING:
+//      Row tap → P5DimensiSheet (parent viewer, accordion list)
+//        ├── Tambah Elemen → ElemenFormSheet (child)
+//        ├── Edit Elemen (Pencil) → ElemenFormSheet (child)
+//        ├── Tambah Sub-elemen → SubElemenFormSheet (child)
+//        └── Edit Sub-elemen → SubElemenFormSheet (child)
+//      
+//      Toolbar [Tambah] / kebab Edit → DimensiFormSheet (no parent)
+//
+//      Width: semua sm:max-w-xl (default tier).
+//
+//   6. PRESERVED:
+//      - Semua hooks (useP5Tree, dimensi/elemen/sub-elemen CRUD)
+//      - Form dialogs di-lift ke TabP5Master state (survive sheet
+//        unmount)
+//      - NativeSelect untuk filter fase
+//      - Table 4 kolom (#, Nama Dimensi, Elemen count, Kebab)
+//      - Confirm dialog hapus dimensi (AlertDialog inline di
+//        DimensiTableRow)
+//      - DeleteElemenButton + DeleteSubElemenButton (AlertDialog
+//        inline di P5DimensiSheet body)
+//      - Accordion pattern untuk elemen → sub-elemen
+//      - Inline icons (Pencil + Trash) di accordion children
+//        karena lebih sering disentuh
+//
+//   7. REMOVED: import { Drawer } from "vaul" — gak dipake lagi.
 // ============================================================
 
 "use client";
 
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { Drawer } from "vaul";
 import {
   useP5Tree,
   useCreateDimensi,
@@ -72,7 +83,6 @@ import type {
   Fase,
 } from "@/types";
 
-// shadcn primitives
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -90,12 +100,11 @@ import {
   NativeSelectOption,
 } from "@/components/ui/native-select";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import {
   Accordion,
   AccordionContent,
@@ -134,8 +143,8 @@ import {
   Trash2,
   Sparkles,
   BookOpen,
-  X,
   MoreHorizontal,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -149,19 +158,17 @@ const FASE_LIST: Fase[] = [
 ];
 
 // ============================================================
-// MAIN — TabP5Master
+// MAIN
 // ============================================================
 
 export function TabP5Master() {
   const [fase, setFase] = useState<Fase>("Fase F");
   const { data: tree, isLoading } = useP5Tree(fase);
 
-  // Drawer state
   const [drawerDimensi, setDrawerDimensi] = useState<P5DimensiTree | null>(
     null
   );
 
-  // Dialog states (lifted ke parent supaya survive drawer state changes)
   const [dimensiForm, setDimensiForm] = useState<{
     open: boolean;
     editing: P5Dimensi | null;
@@ -181,7 +188,7 @@ export function TabP5Master() {
 
   return (
     <div className="space-y-5">
-      {/* Toolbar — fase filter (NativeSelect) + tombol Tambah Dimensi */}
+      {/* Toolbar */}
       <div className="flex items-center justify-end gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Label
@@ -212,7 +219,7 @@ export function TabP5Master() {
         </Button>
       </div>
 
-      {/* Table list 6 dimensi */}
+      {/* Table 6 dimensi */}
       {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
@@ -252,8 +259,8 @@ export function TabP5Master() {
         </div>
       )}
 
-      {/* Form dialog: Dimensi */}
-      <DimensiFormDialog
+      {/* Sheet — Dimensi form (no parent) */}
+      <DimensiFormSheet
         open={dimensiForm.open}
         onOpenChange={(v) =>
           setDimensiForm({ open: v, editing: v ? dimensiForm.editing : null })
@@ -261,8 +268,8 @@ export function TabP5Master() {
         editing={dimensiForm.editing}
       />
 
-      {/* Drawer: kelola elemen + sub-elemen di dalam dimensi */}
-      <P5DimensiDrawer
+      {/* Sheet — Parent viewer (kelola elemen + sub-elemen) */}
+      <P5DimensiSheet
         dimensi={drawerDimensi}
         fase={fase}
         onClose={() => setDrawerDimensi(null)}
@@ -290,8 +297,8 @@ export function TabP5Master() {
         }}
       />
 
-      {/* Form dialog: Elemen */}
-      <ElemenFormDialog
+      {/* Sheet — Elemen form (child of P5DimensiSheet) */}
+      <ElemenFormSheet
         open={elemenForm.open}
         onOpenChange={(v) =>
           setElemenForm((prev) => ({
@@ -304,8 +311,8 @@ export function TabP5Master() {
         editing={elemenForm.editing}
       />
 
-      {/* Form dialog: Sub-elemen */}
-      <SubElemenFormDialog
+      {/* Sheet — Sub-elemen form (child of P5DimensiSheet) */}
+      <SubElemenFormSheet
         open={subForm.open}
         onOpenChange={(v) =>
           setSubForm((prev) => ({
@@ -323,7 +330,7 @@ export function TabP5Master() {
 }
 
 // ============================================================
-// DimensiTableRow — single row di table dengan kebab menu
+// DimensiTableRow
 // ============================================================
 
 function DimensiTableRow({
@@ -400,7 +407,6 @@ function DimensiTableRow({
         </TableCell>
       </TableRow>
 
-      {/* Confirm dialog hapus dimensi */}
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -429,10 +435,10 @@ function DimensiTableRow({
 }
 
 // ============================================================
-// P5DimensiDrawer — vaul responsive direction
+// P5DimensiSheet — PARENT VIEWER (replaces P5DimensiDrawer/vaul)
 // ============================================================
 
-function P5DimensiDrawer({
+function P5DimensiSheet({
   dimensi,
   fase,
   onClose,
@@ -450,58 +456,51 @@ function P5DimensiDrawer({
   onEditSubElemen: (elemenId: number, sub: P5SubElemen) => void;
 }) {
   const isDesktop = useIsDesktop();
-  const direction = isDesktop ? "right" : "bottom";
   const open = dimensi !== null;
 
   return (
-    <Drawer.Root
+    <Sheet
       open={open}
       onOpenChange={(v) => {
         if (!v) onClose();
       }}
-      direction={direction}
     >
-      <Drawer.Portal>
-        <Drawer.Overlay className="fixed inset-0 z-50 bg-black/40" />
-        <Drawer.Content
-          className={cn(
-            "fixed z-50 flex flex-col bg-background outline-none",
-            isDesktop &&
-            "right-0 top-0 bottom-0 w-full max-w-lg border-l shadow-xl",
-            !isDesktop &&
-            "left-0 right-0 bottom-0 max-h-[85vh] rounded-t-2xl border-t shadow-xl"
-          )}
-        >
-          <Drawer.Title className="sr-only">
-            Kelola Elemen dan Sub-elemen
-          </Drawer.Title>
-          <Drawer.Description className="sr-only">
-            Drawer untuk menambah, edit, dan hapus elemen serta sub-elemen di
-            dalam dimensi P5
-          </Drawer.Description>
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[88vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          Kelola Dimensi P5 — {dimensi?.nama ?? ""}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Kelola elemen dan sub-elemen di dalam dimensi Profil Pelajar Pancasila
+        </SheetDescription>
 
-          {!isDesktop && (
-            <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
-          )}
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
 
-          {dimensi && (
-            <DrawerBody
-              dimensi={dimensi}
-              fase={fase}
-              onClose={onClose}
-              onAddElemen={onAddElemen}
-              onEditElemen={onEditElemen}
-              onAddSubElemen={onAddSubElemen}
-              onEditSubElemen={onEditSubElemen}
-            />
-          )}
-        </Drawer.Content>
-      </Drawer.Portal>
-    </Drawer.Root>
+        {dimensi && (
+          <P5DimensiBody
+            dimensi={dimensi}
+            fase={fase}
+            onClose={onClose}
+            onAddElemen={onAddElemen}
+            onEditElemen={onEditElemen}
+            onAddSubElemen={onAddSubElemen}
+            onEditSubElemen={onEditSubElemen}
+          />
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 
-function DrawerBody({
+function P5DimensiBody({
   dimensi,
   fase,
   onClose,
@@ -521,7 +520,7 @@ function DrawerBody({
   return (
     <>
       {/* Header */}
-      <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5">
+      <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
           <Sparkles className="h-4 w-4 text-primary" />
         </div>
@@ -536,15 +535,6 @@ function DrawerBody({
             {dimensi.elemen.length} elemen
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 flex-shrink-0"
-          onClick={onClose}
-          aria-label="Tutup"
-        >
-          <X className="h-4 w-4" />
-        </Button>
       </div>
 
       {/* Body — accordion list elemen */}
@@ -569,7 +559,7 @@ function DrawerBody({
         )}
       </div>
 
-      {/* Footer — Tutup + Tambah Elemen (no Edit/Hapus dimensi) */}
+      {/* Footer */}
       <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
         <Button
           variant="outline"
@@ -590,7 +580,6 @@ function DrawerBody({
 
 // ============================================================
 // ElemenAccordionItem — 1 elemen + nested sub-elemen
-// Inline icons (Pencil + Trash) karena children lebih sering disentuh
 // ============================================================
 
 function ElemenAccordionItem({
@@ -692,199 +681,7 @@ function ElemenAccordionItem({
 }
 
 // ============================================================
-// DimensiFormDialog — preserved
-// ============================================================
-
-function DimensiFormDialog({
-  open,
-  onOpenChange,
-  editing,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  editing: P5Dimensi | null;
-}) {
-  const create = useCreateDimensi();
-  const update = useUpdateDimensi();
-
-  const form = useForm<P5DimensiFormData>({
-    resolver: typedResolver(p5DimensiSchema),
-    values: editing
-      ? {
-        nomor: editing.nomor,
-        nama: editing.nama,
-        urutan: editing.urutan,
-        is_aktif: editing.is_aktif,
-      }
-      : { nomor: 1, nama: "", urutan: 99, is_aktif: true },
-  });
-
-  const onSubmit = async (values: P5DimensiFormData) => {
-    try {
-      if (editing) {
-        await update.mutateAsync({ id: editing.id, values });
-      } else {
-        await create.mutateAsync(values);
-      }
-      onOpenChange(false);
-      form.reset();
-    } catch {
-      /* toast handled */
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            {editing ? "Edit Dimensi" : "Tambah Dimensi"}
-          </DialogTitle>
-        </DialogHeader>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-          <div className="grid grid-cols-[100px_1fr] gap-3">
-            <div className="space-y-2">
-              <Label>Nomor *</Label>
-              <Input
-                type="number"
-                min={1}
-                max={99}
-                {...form.register("nomor")}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Nama Dimensi *</Label>
-              <Input
-                {...form.register("nama")}
-                placeholder="Misal: Bernalar Kritis"
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label>Urutan Tampil</Label>
-            <Input type="number" {...form.register("urutan")} />
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2">
-            <Label>Aktif</Label>
-            <Switch
-              checked={form.watch("is_aktif")}
-              onCheckedChange={(v) => form.setValue("is_aktif", v)}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Batal
-            </Button>
-            <Button type="submit" disabled={form.formState.isSubmitting}>
-              {editing ? "Simpan" : "Tambah"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ============================================================
-// ElemenFormDialog — preserved
-// ============================================================
-
-function ElemenFormDialog({
-  open,
-  onOpenChange,
-  dimensiId,
-  editing,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  dimensiId: number | null;
-  editing: P5Elemen | null;
-}) {
-  const create = useCreateElemen();
-  const update = useUpdateElemen();
-
-  const form = useForm<P5ElemenFormData>({
-    resolver: typedResolver(p5ElemenSchema),
-    values: editing
-      ? {
-        dimensi_id: editing.dimensi_id,
-        nama: editing.nama,
-        urutan: editing.urutan,
-        is_aktif: editing.is_aktif,
-      }
-      : {
-        dimensi_id: dimensiId ?? 0,
-        nama: "",
-        urutan: 99,
-        is_aktif: true,
-      },
-  });
-
-  const onSubmit = async (values: P5ElemenFormData) => {
-    try {
-      if (editing) {
-        await update.mutateAsync({ id: editing.id, values });
-      } else {
-        await create.mutateAsync(values);
-      }
-      onOpenChange(false);
-      form.reset();
-    } catch {
-      /* toast handled */
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            {editing ? "Edit Elemen" : "Tambah Elemen"}
-          </DialogTitle>
-        </DialogHeader>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-          <div className="space-y-2">
-            <Label>Nama Elemen *</Label>
-            <Input
-              {...form.register("nama")}
-              placeholder="Misal: akhlak beragama"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Urutan Tampil</Label>
-            <Input type="number" {...form.register("urutan")} />
-          </div>
-          <div className="flex items-center justify-between rounded-md border px-3 py-2">
-            <Label>Aktif</Label>
-            <Switch
-              checked={form.watch("is_aktif")}
-              onCheckedChange={(v) => form.setValue("is_aktif", v)}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Batal
-            </Button>
-            <Button type="submit" disabled={form.formState.isSubmitting}>
-              {editing ? "Simpan" : "Tambah"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ============================================================
-// DeleteElemenButton — inline AlertDialog di dalam drawer
+// DeleteElemenButton — inline AlertDialog
 // ============================================================
 
 function DeleteElemenButton({
@@ -932,134 +729,7 @@ function DeleteElemenButton({
 }
 
 // ============================================================
-// SubElemenFormDialog — preserved
-// ============================================================
-
-function SubElemenFormDialog({
-  open,
-  onOpenChange,
-  elemenId,
-  defaultFase,
-  editing,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  elemenId: number | null;
-  defaultFase: Fase;
-  editing: P5SubElemen | null;
-}) {
-  const create = useCreateSubElemen();
-  const update = useUpdateSubElemen();
-
-  const form = useForm<P5SubElemenFormData>({
-    resolver: typedResolver(p5SubElemenSchema),
-    values: editing
-      ? {
-        elemen_id: editing.elemen_id,
-        fase: editing.fase as Fase,
-        deskripsi: editing.deskripsi,
-        urutan: editing.urutan,
-        is_aktif: editing.is_aktif,
-      }
-      : {
-        elemen_id: elemenId ?? 0,
-        fase: defaultFase,
-        deskripsi: "",
-        urutan: 99,
-        is_aktif: true,
-      },
-  });
-
-  const onSubmit = async (values: P5SubElemenFormData) => {
-    try {
-      if (editing) {
-        await update.mutateAsync({ id: editing.id, values });
-      } else {
-        await create.mutateAsync(values);
-      }
-      onOpenChange(false);
-      form.reset();
-    } catch {
-      /* toast handled */
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>
-            {editing ? "Edit Sub-elemen" : "Tambah Sub-elemen"}
-          </DialogTitle>
-        </DialogHeader>
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-          <div className="grid grid-cols-[1fr_120px] gap-3">
-            <div className="space-y-2">
-              <Label>Fase *</Label>
-              <Select
-                value={form.watch("fase")}
-                onValueChange={(v) => form.setValue("fase", v as Fase)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {FASE_LIST.map((f) => (
-                    <SelectItem key={f} value={f}>
-                      {f}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Urutan</Label>
-              <Input type="number" {...form.register("urutan")} />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Deskripsi Sub-elemen *</Label>
-            <Textarea
-              rows={5}
-              {...form.register("deskripsi")}
-              placeholder="Deskripsi capaian sub-elemen untuk fase ini…"
-            />
-            {form.formState.errors.deskripsi && (
-              <p className="text-xs text-destructive">
-                {form.formState.errors.deskripsi.message}
-              </p>
-            )}
-          </div>
-
-          <div className="flex items-center justify-between rounded-md border px-3 py-2">
-            <Label>Aktif</Label>
-            <Switch
-              checked={form.watch("is_aktif")}
-              onCheckedChange={(v) => form.setValue("is_aktif", v)}
-            />
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-            >
-              Batal
-            </Button>
-            <Button type="submit" disabled={form.formState.isSubmitting}>
-              {editing ? "Simpan" : "Tambah"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ============================================================
-// DeleteSubElemenButton — inline AlertDialog di dalam drawer
+// DeleteSubElemenButton — inline AlertDialog
 // ============================================================
 
 function DeleteSubElemenButton({
@@ -1101,5 +771,486 @@ function DeleteSubElemenButton({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+// ============================================================
+// DimensiFormSheet (replaces DimensiFormDialog)
+// ============================================================
+
+function DimensiFormSheet({
+  open,
+  onOpenChange,
+  editing,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  editing: P5Dimensi | null;
+}) {
+  const isDesktop = useIsDesktop();
+  const create = useCreateDimensi();
+  const update = useUpdateDimensi();
+
+  const form = useForm<P5DimensiFormData>({
+    resolver: typedResolver(p5DimensiSchema),
+    values: editing
+      ? {
+          nomor: editing.nomor,
+          nama: editing.nama,
+          urutan: editing.urutan,
+          is_aktif: editing.is_aktif,
+        }
+      : { nomor: 1, nama: "", urutan: 99, is_aktif: true },
+  });
+
+  const onSubmit = async (values: P5DimensiFormData) => {
+    try {
+      if (editing) {
+        await update.mutateAsync({ id: editing.id, values });
+      } else {
+        await create.mutateAsync(values);
+      }
+      onOpenChange(false);
+      form.reset();
+    } catch {
+      /* toast handled */
+    }
+  };
+
+  const isPending = create.isPending || update.isPending;
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[92vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          {editing ? `Edit Dimensi — ${editing.nama}` : "Tambah Dimensi P5"}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Form untuk {editing ? "mengedit" : "menambahkan"} dimensi Profil
+          Pelajar Pancasila
+        </SheetDescription>
+
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
+
+        <form
+          onSubmit={form.handleSubmit(onSubmit)}
+          className="flex flex-1 flex-col min-h-0"
+        >
+          <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+              {editing ? (
+                <Pencil className="h-4 w-4 text-primary" />
+              ) : (
+                <Sparkles className="h-4 w-4 text-primary" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                {editing ? "Edit Dimensi" : "Tambah Dimensi"}
+              </p>
+              <h3 className="text-base font-semibold leading-tight mt-0.5 truncate">
+                {editing ? editing.nama : "Dimensi P5 Baru"}
+              </h3>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-4">
+            <div className="grid grid-cols-[100px_1fr] gap-3">
+              <div className="space-y-2">
+                <Label>Nomor *</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={99}
+                  inputMode="numeric"
+                  {...form.register("nomor")}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Nama Dimensi *</Label>
+                <Input
+                  {...form.register("nama")}
+                  placeholder="Misal: Bernalar Kritis"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Urutan Tampil</Label>
+              <Input
+                type="number"
+                inputMode="numeric"
+                {...form.register("urutan")}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <Label>Aktif</Label>
+              <Switch
+                checked={form.watch("is_aktif")}
+                onCheckedChange={(v) => form.setValue("is_aktif", v)}
+              />
+            </div>
+          </div>
+
+          <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+              className="flex-1"
+            >
+              Batal
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={isPending}
+              className="flex-1 gap-1.5"
+            >
+              {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {editing ? "Simpan" : "Tambah"}
+            </Button>
+          </div>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ============================================================
+// ElemenFormSheet (replaces ElemenFormDialog)
+// ============================================================
+
+function ElemenFormSheet({
+  open,
+  onOpenChange,
+  dimensiId,
+  editing,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  dimensiId: number | null;
+  editing: P5Elemen | null;
+}) {
+  const isDesktop = useIsDesktop();
+  const create = useCreateElemen();
+  const update = useUpdateElemen();
+
+  const form = useForm<P5ElemenFormData>({
+    resolver: typedResolver(p5ElemenSchema),
+    values: editing
+      ? {
+          dimensi_id: editing.dimensi_id,
+          nama: editing.nama,
+          urutan: editing.urutan,
+          is_aktif: editing.is_aktif,
+        }
+      : {
+          dimensi_id: dimensiId ?? 0,
+          nama: "",
+          urutan: 99,
+          is_aktif: true,
+        },
+  });
+
+  const onSubmit = async (values: P5ElemenFormData) => {
+    try {
+      if (editing) {
+        await update.mutateAsync({ id: editing.id, values });
+      } else {
+        await create.mutateAsync(values);
+      }
+      onOpenChange(false);
+      form.reset();
+    } catch {
+      /* toast handled */
+    }
+  };
+
+  const isPending = create.isPending || update.isPending;
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[92vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          {editing ? `Edit Elemen — ${editing.nama}` : "Tambah Elemen"}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Form untuk {editing ? "mengedit" : "menambahkan"} elemen di dalam
+          dimensi P5
+        </SheetDescription>
+
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
+
+        <form
+          onSubmit={form.handleSubmit(onSubmit)}
+          className="flex flex-1 flex-col min-h-0"
+        >
+          <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+              {editing ? (
+                <Pencil className="h-4 w-4 text-primary" />
+              ) : (
+                <BookOpen className="h-4 w-4 text-primary" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                {editing ? "Edit Elemen" : "Tambah Elemen"}
+              </p>
+              <h3 className="text-base font-semibold leading-tight mt-0.5 truncate">
+                {editing ? editing.nama : "Elemen Baru"}
+              </h3>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-4">
+            <div className="space-y-2">
+              <Label>Nama Elemen *</Label>
+              <Input
+                {...form.register("nama")}
+                placeholder="Misal: akhlak beragama"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Urutan Tampil</Label>
+              <Input
+                type="number"
+                inputMode="numeric"
+                {...form.register("urutan")}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <Label>Aktif</Label>
+              <Switch
+                checked={form.watch("is_aktif")}
+                onCheckedChange={(v) => form.setValue("is_aktif", v)}
+              />
+            </div>
+          </div>
+
+          <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+              className="flex-1"
+            >
+              Batal
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={isPending}
+              className="flex-1 gap-1.5"
+            >
+              {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {editing ? "Simpan" : "Tambah"}
+            </Button>
+          </div>
+        </form>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ============================================================
+// SubElemenFormSheet (replaces SubElemenFormDialog)
+// ============================================================
+
+function SubElemenFormSheet({
+  open,
+  onOpenChange,
+  elemenId,
+  defaultFase,
+  editing,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  elemenId: number | null;
+  defaultFase: Fase;
+  editing: P5SubElemen | null;
+}) {
+  const isDesktop = useIsDesktop();
+  const create = useCreateSubElemen();
+  const update = useUpdateSubElemen();
+
+  const form = useForm<P5SubElemenFormData>({
+    resolver: typedResolver(p5SubElemenSchema),
+    values: editing
+      ? {
+          elemen_id: editing.elemen_id,
+          fase: editing.fase as Fase,
+          deskripsi: editing.deskripsi,
+          urutan: editing.urutan,
+          is_aktif: editing.is_aktif,
+        }
+      : {
+          elemen_id: elemenId ?? 0,
+          fase: defaultFase,
+          deskripsi: "",
+          urutan: 99,
+          is_aktif: true,
+        },
+  });
+
+  const onSubmit = async (values: P5SubElemenFormData) => {
+    try {
+      if (editing) {
+        await update.mutateAsync({ id: editing.id, values });
+      } else {
+        await create.mutateAsync(values);
+      }
+      onOpenChange(false);
+      form.reset();
+    } catch {
+      /* toast handled */
+    }
+  };
+
+  const isPending = create.isPending || update.isPending;
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side={isDesktop ? "right" : "bottom"}
+        className={cn(
+          "p-0 flex flex-col gap-0",
+          isDesktop && "w-full sm:max-w-xl",
+          !isDesktop && "h-auto max-h-[92vh] rounded-t-2xl"
+        )}
+      >
+        <SheetTitle className="sr-only">
+          {editing ? "Edit Sub-elemen" : "Tambah Sub-elemen"}
+        </SheetTitle>
+        <SheetDescription className="sr-only">
+          Form untuk {editing ? "mengedit" : "menambahkan"} sub-elemen P5 per
+          fase
+        </SheetDescription>
+
+        {!isDesktop && (
+          <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
+        )}
+
+        <form
+          onSubmit={form.handleSubmit(onSubmit)}
+          className="flex flex-1 flex-col min-h-0"
+        >
+          <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+              {editing ? (
+                <Pencil className="h-4 w-4 text-primary" />
+              ) : (
+                <Plus className="h-4 w-4 text-primary" />
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                {editing ? "Edit Sub-elemen" : "Tambah Sub-elemen"}
+              </p>
+              <h3 className="text-base font-semibold leading-tight mt-0.5">
+                {form.watch("fase")}
+              </h3>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-4">
+            <div className="grid grid-cols-[1fr_120px] gap-3">
+              <div className="space-y-2">
+                <Label>Fase *</Label>
+                <Select
+                  value={form.watch("fase")}
+                  onValueChange={(v) => form.setValue("fase", v as Fase)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FASE_LIST.map((f) => (
+                      <SelectItem key={f} value={f}>
+                        {f}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Urutan</Label>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  {...form.register("urutan")}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Deskripsi Sub-elemen *</Label>
+              <Textarea
+                rows={6}
+                {...form.register("deskripsi")}
+                placeholder="Deskripsi capaian sub-elemen untuk fase ini…"
+              />
+              {form.formState.errors.deskripsi && (
+                <p className="text-xs text-destructive">
+                  {form.formState.errors.deskripsi.message}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border px-3 py-2">
+              <Label>Aktif</Label>
+              <Switch
+                checked={form.watch("is_aktif")}
+                onCheckedChange={(v) => form.setValue("is_aktif", v)}
+              />
+            </div>
+          </div>
+
+          <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+              className="flex-1"
+            >
+              Batal
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={isPending}
+              className="flex-1 gap-1.5"
+            >
+              {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {editing ? "Simpan" : "Tambah"}
+            </Button>
+          </div>
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }
