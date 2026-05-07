@@ -63,9 +63,6 @@ export default function RootLayout({
         />
       </head>
       <body className="font-sans antialiased">
-        <div className="w-full bg-yellow-400 text-yellow-900 text-center text-xs font-semibold py-1 px-2 sticky top-0 z-[9999]">
-          STAGING MODE — Bukan untuk penggunaan produksi
-        </div>
         <QueryProvider>
           <AuthProvider>
             {children}
