@@ -1,34 +1,77 @@
 // ============================================================
 // FILE PATH: src/components/features/rapor/rapor-pdf-document.tsx
 // ============================================================
-// REPLACE. v2.4 — sync ke validasi tanggal cetak per paket.
+// REPLACE. v2.12 — REPEATING TABLE HEADER di Lembar 2 (Propela)
+// untuk handle tabel yg pecah cross-page.
 //
-// Perubahan dari versi sebelumnya:
+// Problem: kalau sub-elemen P5 banyak → tabel mecah ke halaman
+// ke-2 → di halaman 2 langsung muncul data row tanpa header
+// "Sub-elemen | MB | SB | BSH | SAB" → user bingung kolom mana
+// yang mana.
 //
-//   1. RaporPDFDocumentProps: ADD field `tanggalCetak: string`
-//      (dari `tanggal_cetak_paket` via useRaporFullData).
+// Fix: tambah `fixed` prop ke `<View style={propelaHeaderRow}>`.
+// Di React-PDF, `fixed` adalah special prop yang bikin element
+// di-replicate otomatis di setiap halaman saat parent (Page) di-
+// render. Beda dgn CSS `position: fixed` biasa — ini render-time
+// behavior, bukan layout absolute.
 //
-//   2. parseTanggalCetak() helper: SIMPLIFIED — tidak ada fallback
-//      ke `new Date()`. Caller (useRaporFullData) GUARANTEE field
-//      ini non-null + valid ISO string. Kalau parse fail (corrupt
-//      data dari DB), tetap throw — gak silent fallback.
+// Hasil: di halaman 1 header muncul sekali (di posisi flow normal),
+// di halaman 2/3/dst header muncul lagi di top of continuation
+// tabel. Tidak dobel di halaman 1 karena React-PDF handle di-
+// duplikasi-nya pintar (cuma replicate untuk halaman tambahan).
 //
-//   3. tahun_pelajaran subquery: HAPUS `tanggal_cetak`. Sekarang
-//      tanggal cetak dari prop `tanggalCetak`, BUKAN dari TP.
+// wrap={false} tetap dipertahankan supaya header gak ke-split
+// tengah-tengah baris.
 //
-//   4. Komentar deprecated dihapus, ganti dengan komentar v2.4.
+// Berdampak HANYA ke Lembar 2 (Propela). Lembar 1 (tabel mapel)
+// tidak dirubah karena udah pake <View break> manual untuk
+// section Ketidakhadiran.
 //
-//   5. Render TTD line: pakai `props.tanggalCetak` langsung,
-//      gak lagi `tp?.tanggal_cetak`.
+// CHANGELOG v2.9 (preserved):
+// TTD Lembar 1 (Raport) NOW JUGA PAKE TABLE GRID
+// dengan VISIBLE BORDERS, persis sama kayak Lembar 2 (Propela)
+// yang udah di-approve user di v2.8.
 //
-// Filosofi:
-//   - PDF doc sekarang DUMB COMPONENT. Trust caller 100% untuk
-//     validasi & data correctness.
-//   - Tidak ada fallback NOW() yang bikin output "look fine"
-//     padahal data hilang.
+// Perubahan dari v2.8:
 //
-// Sisa logic (formatKelas, religion isolation, mapel grouping,
-// PROPELA rendering) TIDAK BERUBAH dari versi sebelumnya.
+//   1. TTD LEMBAR 1 (LembarRaportPage) — FLEX → TABLE GRID:
+//      v2.8 masih pake flexbox `ttdWrap` 3-kolom no-border.
+//      v2.9 pake `ttdTable` 5-kolom × 5-baris dengan border
+//      hitam visible — IDENTIK dengan Lembar 2.
+//
+//   2. TANGGAL DI-MERGE KE DALAM CELL ROW 1 KOLOM 5:
+//      Sebelumnya tanggal pake `<Text style={tglLine}>` sebagai
+//      baris terpisah di atas TTD. Sekarang tanggal masuk ke
+//      DALAM cell Row 1 Kolom 5 TTD table — match struktur
+//      Lembar 2 dan PDF reference asli.
+//
+//      Block `<Text style={styles.tglLine}>...</Text>` yang
+//      di atas TTD wrap LAMA udah DIHAPUS.
+//
+//   3. STYLES YANG DIPAKE (tidak ada style baru):
+//      Semua reuse dari v2.8: ttdTable, ttdTr, ttdTrLast,
+//      ttdTdMain, ttdTdMainLast, ttdTdGutter, ttdSpaceTall,
+//      ttdNameBold, ttdNipSmall.
+//
+//   4. CATATAN — STYLES LAMA (ttdWrap, ttdCol, ttdColCenter,
+//      ttdLabel, ttdSpace, ttdName, ttdSub) JADI DEAD CODE
+//      di rapor-pdf-styles.ts setelah v2.9 ini, tapi tidak
+//      dihapus untuk memudahkan rollback bila perlu.
+//
+// CHANGELOG v2.8 (preserved):
+//   - Lembar 2 TTD pake ttdTable grid (5×5, border visible)
+//   - Tanggal masuk Row 1 Kolom 5 di Lembar 2
+//
+// CHANGELOG v2.7 (preserved):
+//   - Lembar 2 TTD pake ttdWrap/ttdCol — DI-OVERRIDE v2.8
+//
+// CHANGELOG v2.6 (preserved):
+//   - Ketidakhadiran ALWAYS halaman 2 via <View break>
+//   - Catatan Wali Kelas banner CENTER
+//   - Propela tabel anti garis-putus (per-row borders)
+//
+// CHANGELOG v2.4 (preserved):
+//   - tanggalCetak prop required (per-paket)
 // ============================================================
 
 import {
@@ -91,9 +134,7 @@ export interface RaporPDFDocumentProps {
   absensi: Ketidakhadiran | null;
   catatan: CatatanWaliKelas | null;
   /**
-   * v2.4: Tanggal cetak rapor (ISO string YYYY-MM-DD).
-   * Dijamin non-null oleh caller (useRaporFullData throw error
-   * sebelum data sampai ke component kalau tanggal kosong).
+   * Tanggal cetak rapor (ISO string YYYY-MM-DD).
    * Sumber: tabel `tanggal_cetak_paket` (per paket per TP).
    */
   tanggalCetak: string;
@@ -121,13 +162,6 @@ function formatTanggal(d: Date): string {
   });
 }
 
-/**
- * v2.4: Parse ISO date string (YYYY-MM-DD) jadi Date object.
- *
- * Caller (useRaporFullData) GUARANTEE input non-null & format valid.
- * Kalau parse fail (data corrupt di DB / format aneh), throw error
- * eksplisit BUKAN fallback ke new Date() — biar bug ke-detect early.
- */
 function parseTanggalCetak(iso: string): Date {
   const d = new Date(iso);
   if (isNaN(d.getTime())) {
@@ -187,10 +221,8 @@ function LembarRaportPage({
   const rb = enrollment.rombongan_belajar;
   const tp = rb?.tahun_pelajaran;
 
-  // Religion isolation — siswa cuma liat mapel agama yang match
   const siswaAgama: string | null = pd?.agama ?? null;
 
-  // Group mapel by kelompok
   const byKelompok: Record<KelompokMapel, NilaiRow[]> = {
     umum: [],
     muatan_lokal: [],
@@ -227,7 +259,6 @@ function LembarRaportPage({
 
   return (
     <Page size="A4" style={styles.page}>
-      {/* Identitas */}
       <View style={styles.identitas}>
         <View style={styles.identitasColLeft}>
           <IdRow label="Nama Satuan Pendidikan" value={sekolah?.nama ?? "-"} />
@@ -256,7 +287,6 @@ function LembarRaportPage({
         </View>
       </View>
 
-      {/* Section A */}
       <Text style={styles.sectionBanner}>A. Lembar Isi Mata Pelajaran</Text>
 
       <MapelTable
@@ -286,7 +316,6 @@ function LembarRaportPage({
         resetNomor={true}
       />
 
-      {/* Ekstrakurikuler */}
       <Text style={[styles.sectionBanner, styles.mt8]}>
         Kegiatan Ekstrakurikuler
       </Text>
@@ -338,73 +367,130 @@ function LembarRaportPage({
         )}
       </View>
 
-      {/* Ketidakhadiran */}
-      <Text style={[styles.sectionBanner, styles.mt8]}>Ketidakhadiran</Text>
-      <View style={styles.table}>
-        <View style={styles.tr}>
-          <Text style={[styles.th, styles.colAbsenNo]}>No</Text>
-          <Text style={[styles.th, styles.colAbsenLabel]}>Keterangan</Text>
-          <Text style={[styles.thLast, styles.colAbsenVal]}>Jumlah</Text>
-        </View>
-        <View style={styles.tr}>
-          <Text style={[styles.td, styles.tdCenter, styles.colAbsenNo]}>1</Text>
-          <Text style={[styles.td, styles.colAbsenLabel]}>Izin</Text>
-          <Text style={[styles.tdLast, styles.tdCenter, styles.colAbsenVal]}>
-            {absensi?.izin ?? 0} hari
-          </Text>
-        </View>
-        <View style={styles.tr}>
-          <Text style={[styles.td, styles.tdCenter, styles.colAbsenNo]}>2</Text>
-          <Text style={[styles.td, styles.colAbsenLabel]}>Sakit</Text>
-          <Text style={[styles.tdLast, styles.tdCenter, styles.colAbsenVal]}>
-            {absensi?.sakit ?? 0} hari
-          </Text>
-        </View>
-        <View style={styles.trLast}>
-          <Text style={[styles.td, styles.tdCenter, styles.colAbsenNo]}>3</Text>
-          <Text style={[styles.td, styles.colAbsenLabel]}>Alpa</Text>
-          <Text style={[styles.tdLast, styles.tdCenter, styles.colAbsenVal]}>
-            {absensi?.alpha ?? 0} hari
-          </Text>
-        </View>
-      </View>
-
-      {catatan?.catatan && (
-        <>
-          <Text style={[styles.sectionBanner, styles.mt8]}>
-            Catatan Wali Kelas
-          </Text>
-          <View style={styles.catatanBox}>
-            <Text>{catatan.catatan}</Text>
+      <View break>
+        <Text style={styles.sectionBanner}>Ketidakhadiran</Text>
+        <View style={styles.table}>
+          <View style={styles.tr}>
+            <Text style={[styles.th, styles.colAbsenNo]}>No</Text>
+            <Text style={[styles.th, styles.colAbsenLabel]}>Keterangan</Text>
+            <Text style={[styles.thLast, styles.colAbsenVal]}>Jumlah</Text>
           </View>
-        </>
-      )}
-
-      {/* Tanggal cetak — v2.4: dari prop tanggalCetak (per paket) */}
-      <Text style={styles.tglLine}>
-        {kota}, {formatTanggal(tanggalCetakDate)}
-      </Text>
-
-      {/* TTD lembar 1 */}
-      <View style={styles.ttdWrap}>
-        <View style={styles.ttdCol}>
-          <Text style={styles.ttdLabel}>Orang Tua/Wali</Text>
-          <View style={styles.ttdSpace} />
-          <Text style={styles.ttdName}>{"........................"}</Text>
+          <View style={styles.tr}>
+            <Text style={[styles.td, styles.tdCenter, styles.colAbsenNo]}>1</Text>
+            <Text style={[styles.td, styles.colAbsenLabel]}>Izin</Text>
+            <Text style={[styles.tdLast, styles.tdCenter, styles.colAbsenVal]}>
+              {absensi?.izin ?? 0} hari
+            </Text>
+          </View>
+          <View style={styles.tr}>
+            <Text style={[styles.td, styles.tdCenter, styles.colAbsenNo]}>2</Text>
+            <Text style={[styles.td, styles.colAbsenLabel]}>Sakit</Text>
+            <Text style={[styles.tdLast, styles.tdCenter, styles.colAbsenVal]}>
+              {absensi?.sakit ?? 0} hari
+            </Text>
+          </View>
+          <View style={styles.trLast}>
+            <Text style={[styles.td, styles.tdCenter, styles.colAbsenNo]}>3</Text>
+            <Text style={[styles.td, styles.colAbsenLabel]}>Alpa</Text>
+            <Text style={[styles.tdLast, styles.tdCenter, styles.colAbsenVal]}>
+              {absensi?.alpha ?? 0} hari
+            </Text>
+          </View>
         </View>
-        <View style={styles.ttdColCenter}>
-          <Text style={styles.ttdLabel}>Mengetahui</Text>
-          <Text style={styles.ttdLabel}>
-            Kepala {sekolah?.nama ?? "PKBM Al Barakah"}
-          </Text>
-          <View style={styles.ttdSpace} />
-          <Text style={styles.ttdName}>{kepalaPkbm}</Text>
-          <Text style={styles.ttdSub}>NIP. {nipKepala}</Text>
-        </View>
-        <View style={styles.ttdCol}>
-          <Text style={styles.ttdLabel}>Wali Kelas</Text>
-          <View style={styles.ttdSpace} />
-          <Text style={styles.ttdName}>{waliKelasNm}</Text>
+
+        {catatan?.catatan && (
+          <>
+            <Text style={[styles.sectionBannerCenter, styles.mt8]}>
+              Catatan Wali Kelas
+            </Text>
+            <View style={styles.catatanBox}>
+              <Text>{catatan.catatan}</Text>
+            </View>
+          </>
+        )}
+
+        {/* ╔════════════════════════════════════════════════════╗
+            ║ v2.9: TTD LEMBAR 1 — PROPER TABLE GRID             ║
+            ║                                                    ║
+            ║ IDENTIK dengan TTD Lembar 2 (Propela). 5 kolom    ║
+            ║ × 5 baris, border hitam visible.                   ║
+            ║                                                    ║
+            ║ Tanggal MASUK ke dalam Row 1 Kolom 5 (cell yg     ║
+            ║ sama dengan "Wali Kelas" di Row 2).               ║
+            ║                                                    ║
+            ║ Block <Text style={tglLine}>...</Text> yg DULU di ║
+            ║ atas TTD UDAH DIHAPUS — sekarang inline di cell.  ║
+            ║                                                    ║
+            ║ Layout:                                            ║
+            ║ ┌──────────┬─┬──────────┬─┬──────────┐            ║
+            ║ │ ortu     │ │ menget.  │ │ tgl      │ Row 1      ║
+            ║ ├──────────┼─┼──────────┼─┼──────────┤            ║
+            ║ │          │ │ kepala   │ │ wali kls │ Row 2      ║
+            ║ ├──────────┼─┼──────────┼─┼──────────┤            ║
+            ║ │          │ │          │ │          │ Row 3 sig  ║
+            ║ ├──────────┼─┼──────────┼─┼──────────┤            ║
+            ║ │ ........ │ │ kepala   │ │ wali     │ Row 4 nama ║
+            ║ ├──────────┼─┼──────────┼─┼──────────┤            ║
+            ║ │          │ │ NIP. -   │ │          │ Row 5 NIP  ║
+            ║ └──────────┴─┴──────────┴─┴──────────┘            ║
+            ╚════════════════════════════════════════════════════╝ */}
+        <View style={styles.ttdTable}>
+          {/* Row 1: header labels + tanggal */}
+          <View style={styles.ttdTr}>
+            <Text style={styles.ttdTdMain}>Orang Tua/Wali</Text>
+            <View style={styles.ttdTdGutter} />
+            <Text style={styles.ttdTdMain}>Mengetahui</Text>
+            <View style={styles.ttdTdGutter} />
+            <Text style={styles.ttdTdMainLast}>
+              {kota}, {formatTanggal(tanggalCetakDate)}
+            </Text>
+          </View>
+
+          {/* Row 2: sub-header (Kepala PKBM + Wali Kelas) */}
+          <View style={styles.ttdTr}>
+            <Text style={styles.ttdTdMain}>{" "}</Text>
+            <View style={styles.ttdTdGutter} />
+            <Text style={styles.ttdTdMain}>
+              Kepala {sekolah?.nama ?? "PKBM Al Barakah"}
+            </Text>
+            <View style={styles.ttdTdGutter} />
+            <Text style={styles.ttdTdMainLast}>Wali Kelas</Text>
+          </View>
+
+          {/* Row 3: signature space (tall, empty) */}
+          <View style={[styles.ttdTr, styles.ttdSpaceTall]}>
+            <Text style={styles.ttdTdMain}>{" "}</Text>
+            <View style={styles.ttdTdGutter} />
+            <Text style={styles.ttdTdMain}>{" "}</Text>
+            <View style={styles.ttdTdGutter} />
+            <Text style={styles.ttdTdMainLast}>{" "}</Text>
+          </View>
+
+          {/* Row 4: nama (bold) */}
+          <View style={styles.ttdTr}>
+            <Text style={[styles.ttdTdMain, styles.ttdNameBold]}>
+              ........................
+            </Text>
+            <View style={styles.ttdTdGutter} />
+            <Text style={[styles.ttdTdMain, styles.ttdNameBold]}>
+              {kepalaPkbm}
+            </Text>
+            <View style={styles.ttdTdGutter} />
+            <Text style={[styles.ttdTdMainLast, styles.ttdNameBold]}>
+              {waliKelasNm}
+            </Text>
+          </View>
+
+          {/* Row 5: NIP (last row, no border bottom) */}
+          <View style={styles.ttdTrLast}>
+            <Text style={styles.ttdTdMain}>{" "}</Text>
+            <View style={styles.ttdTdGutter} />
+            <Text style={[styles.ttdTdMain, styles.ttdNipSmall]}>
+              NIP. {nipKepala}
+            </Text>
+            <View style={styles.ttdTdGutter} />
+            <Text style={styles.ttdTdMainLast}>{" "}</Text>
+          </View>
         </View>
       </View>
     </Page>
@@ -483,7 +569,7 @@ function MapelTable({
 }
 
 // ============================================================
-// LEMBAR 2 — PROPELA
+// LEMBAR 2 — PROPELA (TIDAK BERUBAH dari v2.8)
 // ============================================================
 
 function LembarPropelaPage({
@@ -498,6 +584,8 @@ function LembarPropelaPage({
   const rb = enrollment.rombongan_belajar;
   const tp = rb?.tahun_pelajaran;
   const waliKelasNm = rb?.wali_kelas ?? "........................";
+  const kepalaPkbm = sekolah?.kepala_pkbm ?? "........................";
+  const nipKepala = sekolah?.nip_kepala ?? "-";
   const kota = sekolah?.kota ?? sekolah?.kabupaten ?? "Madiun";
   const tanggalCetakDate = parseTanggalCetak(tanggalCetak);
 
@@ -544,8 +632,14 @@ function LembarPropelaPage({
       </Text>
 
       <View style={styles.propelaTableWrapper}>
-        <View style={styles.tr}>
-          <Text style={[styles.th, styles.colP5Desc]}>Sub-elemen</Text>
+        {/* v2.12: `fixed` prop → header row OTOMATIS di-render
+            ulang di tiap halaman saat tabel pecah cross-page.
+            Beda dgn position:fixed CSS biasa — ini React-PDF
+            specific: element tetap di posisi flow, cuma di-
+            replicate per halaman. wrap={false} dipertahankan
+            supaya header gak ke-split di tengah baris. */}
+        <View style={styles.propelaHeaderRow} fixed wrap={false}>
+          <Text style={[styles.thLeft, styles.colP5Desc]}>Sub-elemen</Text>
           {PREDIKAT_P5_ORDER.map((p, idx) => {
             const isLast = idx === PREDIKAT_P5_ORDER.length - 1;
             return (
@@ -562,80 +656,72 @@ function LembarPropelaPage({
           })}
         </View>
 
-        {p5Tree.map((dim, dimIdx) => {
-          const isLastDim = dimIdx === p5Tree.length - 1;
-          return (
-            <View key={dim.id}>
+        {p5Tree.map((dim) => (
+          <View key={dim.id}>
+            <View wrap={false}>
               <Text style={styles.dimensiRow}>
                 {dim.nomor}. {dim.nama}
               </Text>
-
-              {dim.elemen.map((el, elIdx) => {
-                const isLastEl = elIdx === dim.elemen.length - 1;
-                return (
-                  <View key={el.id}>
-                    <Text style={styles.elemenRow}>Elemen: {el.nama}</Text>
-
-                    {el.sub_elemen.length === 0 ? (
-                      <View
-                        style={
-                          isLastDim && isLastEl ? styles.trLast : styles.tr
-                        }
-                      >
-                        <Text
-                          style={[
-                            styles.tdLast,
-                            styles.tdItalic,
-                            { width: "100%", textAlign: "center" },
-                          ]}
-                        >
-                          Belum ada sub-elemen untuk fase ini.
-                        </Text>
-                      </View>
-                    ) : (
-                      el.sub_elemen.map((sub, i) => {
-                        const isLastSub = i === el.sub_elemen.length - 1;
-                        const isAbsoluteLast =
-                          isLastDim && isLastEl && isLastSub;
-                        const rowStyle = isAbsoluteLast
-                          ? styles.trLast
-                          : styles.tr;
-                        const predikat = penilaianP5Map.get(sub.id);
-                        return (
-                          <View key={sub.id} style={rowStyle}>
-                            <Text style={[styles.td, styles.colP5Desc]}>
-                              {sub.deskripsi}
-                            </Text>
-                            {PREDIKAT_P5_ORDER.map((p, idx) => {
-                              const isCheck = predikat === p;
-                              const isLastCol =
-                                idx === PREDIKAT_P5_ORDER.length - 1;
-                              return (
-                                <Text
-                                  key={p}
-                                  style={[
-                                    isLastCol ? styles.tdLast : styles.td,
-                                    styles.tdCenter,
-                                    styles.colP5Check,
-                                    isCheck
-                                      ? { fontSize: 12, fontWeight: "bold" }
-                                      : { fontSize: 9 },
-                                  ]}
-                                >
-                                  {isCheck ? CHECK_GLYPH : ""}
-                                </Text>
-                              );
-                            })}
-                          </View>
-                        );
-                      })
-                    )}
-                  </View>
-                );
-              })}
             </View>
-          );
-        })}
+
+            {dim.elemen.map((el) => (
+              <View key={el.id}>
+                <View wrap={false}>
+                  <Text style={styles.elemenRow}>Elemen: {el.nama}</Text>
+                </View>
+
+                {el.sub_elemen.length === 0 ? (
+                  <View style={styles.propelaDataRow} wrap={false}>
+                    <Text
+                      style={[
+                        styles.tdLast,
+                        styles.tdItalic,
+                        { width: "100%", textAlign: "center" },
+                      ]}
+                    >
+                      Belum ada sub-elemen untuk fase ini.
+                    </Text>
+                  </View>
+                ) : (
+                  el.sub_elemen.map((sub) => {
+                    const predikat = penilaianP5Map.get(sub.id);
+                    return (
+                      <View
+                        key={sub.id}
+                        style={styles.propelaDataRow}
+                        wrap={false}
+                      >
+                        <Text style={[styles.td, styles.colP5Desc]}>
+                          {sub.deskripsi}
+                        </Text>
+                        {PREDIKAT_P5_ORDER.map((p, idx) => {
+                          const isCheck = predikat === p;
+                          const isLastCol =
+                            idx === PREDIKAT_P5_ORDER.length - 1;
+                          return (
+                            <Text
+                              key={p}
+                              style={[
+                                isLastCol ? styles.tdLast : styles.td,
+                                styles.tdCenter,
+                                styles.colP5Check,
+                                isCheck
+                                  ? { fontSize: 12, fontWeight: "bold" }
+                                  : { fontSize: 9 },
+                              ]}
+                            >
+                              {isCheck ? CHECK_GLYPH : ""}
+                            </Text>
+                          );
+                        })}
+                      </View>
+                    );
+                  })
+                )}
+              </View>
+            ))}
+          </View>
+        ))}
       </View>
 
       <Text style={[styles.sectionBanner, styles.mt8]}>
@@ -648,15 +734,63 @@ function LembarPropelaPage({
         </Text>
       </View>
 
-      {/* TTD Wali Kelas — v2.4: tanggal dari prop tanggalCetak */}
-      <View style={styles.ttdWrapRight}>
-        <View style={styles.ttdColRightAligned}>
-          <Text style={styles.tglLineLeft}>
+      {/* TTD LEMBAR 2 — Table grid (TIDAK BERUBAH dari v2.8) */}
+      <View style={styles.ttdTable}>
+        {/* Row 1: header labels + tanggal */}
+        <View style={styles.ttdTr}>
+          <Text style={styles.ttdTdMain}>Orang Tua/Wali</Text>
+          <View style={styles.ttdTdGutter} />
+          <Text style={styles.ttdTdMain}>Mengetahui</Text>
+          <View style={styles.ttdTdGutter} />
+          <Text style={styles.ttdTdMainLast}>
             {kota}, {formatTanggal(tanggalCetakDate)}
           </Text>
-          <Text style={styles.ttdLabelLeft}>Wali Kelas</Text>
-          <View style={styles.ttdSpace} />
-          <Text style={styles.ttdNameLeft}>{waliKelasNm}</Text>
+        </View>
+
+        {/* Row 2: sub-header (Kepala PKBM + Wali Kelas) */}
+        <View style={styles.ttdTr}>
+          <Text style={styles.ttdTdMain}>{" "}</Text>
+          <View style={styles.ttdTdGutter} />
+          <Text style={styles.ttdTdMain}>
+            Kepala {sekolah?.nama ?? "PKBM Al Barakah"}
+          </Text>
+          <View style={styles.ttdTdGutter} />
+          <Text style={styles.ttdTdMainLast}>Wali Kelas</Text>
+        </View>
+
+        {/* Row 3: signature space (tall, empty) */}
+        <View style={[styles.ttdTr, styles.ttdSpaceTall]}>
+          <Text style={styles.ttdTdMain}>{" "}</Text>
+          <View style={styles.ttdTdGutter} />
+          <Text style={styles.ttdTdMain}>{" "}</Text>
+          <View style={styles.ttdTdGutter} />
+          <Text style={styles.ttdTdMainLast}>{" "}</Text>
+        </View>
+
+        {/* Row 4: nama (bold) */}
+        <View style={styles.ttdTr}>
+          <Text style={[styles.ttdTdMain, styles.ttdNameBold]}>
+            ........................
+          </Text>
+          <View style={styles.ttdTdGutter} />
+          <Text style={[styles.ttdTdMain, styles.ttdNameBold]}>
+            {kepalaPkbm}
+          </Text>
+          <View style={styles.ttdTdGutter} />
+          <Text style={[styles.ttdTdMainLast, styles.ttdNameBold]}>
+            {waliKelasNm}
+          </Text>
+        </View>
+
+        {/* Row 5: NIP (last row, no border bottom) */}
+        <View style={styles.ttdTrLast}>
+          <Text style={styles.ttdTdMain}>{" "}</Text>
+          <View style={styles.ttdTdGutter} />
+          <Text style={[styles.ttdTdMain, styles.ttdNipSmall]}>
+            NIP. {nipKepala}
+          </Text>
+          <View style={styles.ttdTdGutter} />
+          <Text style={styles.ttdTdMainLast}>{" "}</Text>
         </View>
       </View>
 

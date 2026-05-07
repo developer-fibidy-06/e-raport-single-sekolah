@@ -1,13 +1,59 @@
 // ============================================================
 // FILE PATH: src/components/features/rapor/rapor-pdf-styles.ts
 // ============================================================
-// FINAL VERSION. Perubahan dari sebelumnya:
-//   1. PROPELA: tabel "nempel" — tambah style tableConnected,
-//      trConnected, dimensiTitleConnected biar semua border
-//      continuous dari dimensi → elemen → sub-elemen
-//   2. TTD KANAN BAWAH: ttdColRightAligned — block di posisi kanan
-//      halaman tapi isinya rata KIRI (bukan center)
-//   3. LEGEND BOTTOM: hapus border, jadi plain text section
+// REPLACE. v2.11 — REVERT v2.10. `alignItems: "center"` di tr
+// bikin border kanan tiap cell patah-patah (cell shrink ke tinggi
+// konten, gak stretch ke tinggi row penuh). User reject visual-nya.
+//
+// Layout TOP-ALIGN (default flex stretch) tetep dipake — itu
+// memang standar tabel rapor: text di kolom pendek mulai dari
+// atas, sejajar dengan baris-1 kolom Capaian. Border kanan
+// nyambung utuh dari atas ke bawah row.
+//
+// CHANGELOG v2.10 (REVERTED):
+// Tambah `alignItems: "center"` di tr/trLast — DITOLAK karena
+// merusak border. Lessons learned: di React-PDF, alignItems
+// non-stretch di parent flex bikin child <Text> shrink ke
+// content height, padahal border ikut child → patah.
+//
+// CHANGELOG v2.9 (preserved):
+// TTD TABLE NO BORDER. Structure tabel tetap (cell widths,
+// padding, alignment, jumlah baris/kolom), tapi garis hitamnya
+// DIHILANGKAN — borderWidth set ke 0 di semua ttdTable* styles.
+//
+// Perubahan dari v2.8:
+//
+//   1. ttdTable          : borderWidth 1 → 0
+//   2. ttdTr             : borderBottomWidth 1 → 0
+//   3. ttdTdMain         : borderRightWidth 1 → 0
+//   4. ttdTdGutter       : borderRightWidth 1 → 0
+//
+//   Style ttdTrLast & ttdTdMainLast tidak berubah (memang
+//   udah no-border sejak v2.8).
+//
+//   Properti border lainnya (borderColor) dipertahankan
+//   sebagai dokumentasi — tidak berdampak visual karena width=0.
+//
+//   Cell widths, padding, fontSize, textAlign, ttdSpaceTall
+//   (minHeight 45), ttdNameBold, ttdNipSmall — SEMUA UTUH.
+//
+// CATATAN:
+//   - Lembar 1 (Raport) & Lembar 2 (Propela) sama-sama pake
+//     ttdTable, jadi perubahan ini berdampak ke KEDUA lembar.
+//
+// CHANGELOG v2.8 (preserved):
+//   - TTD Lembar 2 jadi proper table grid 5×5 dengan border.
+//     Border-nya sekarang dihapus di v2.9 per request user.
+//
+// CHANGELOG v2.7 (preserved):
+//   - Lembar 2 TTD pake ttdWrap/ttdCol — DI-OVERRIDE v2.8
+//
+// CHANGELOG v2.6 (preserved):
+//   - propelaTableWrapper tanpa border (anti garis-putus)
+//   - sectionBannerCenter variant (Catatan Wali Kelas center)
+//
+// CHANGELOG v2.5 (preserved): banner section/sub rata kiri,
+// thLeft variant, TTD propela compact.
 // ============================================================
 
 import { StyleSheet, Font } from "@react-pdf/renderer";
@@ -79,10 +125,23 @@ export const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // ── SECTION BANNER ─────────────────────────────────────
+  // ── SECTION BANNER (rata KIRI — default) ──────────────
   sectionBanner: {
     backgroundColor: COLORS.bgHeader,
-    padding: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+    fontWeight: "bold",
+    fontSize: 10,
+    textAlign: "left",
+    borderWidth: 1,
+    borderColor: COLORS.black,
+    marginTop: 8,
+    marginBottom: 0,
+  },
+  sectionBannerCenter: {
+    backgroundColor: COLORS.bgHeader,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
     fontWeight: "bold",
     fontSize: 10,
     textAlign: "center",
@@ -93,10 +152,11 @@ export const styles = StyleSheet.create({
   },
   subBanner: {
     backgroundColor: COLORS.bgSection,
-    padding: 3,
+    paddingVertical: 3,
+    paddingHorizontal: 6,
     fontWeight: "bold",
     fontSize: 9,
-    textAlign: "center",
+    textAlign: "left",
     borderWidth: 1,
     borderTopWidth: 0,
     borderColor: COLORS.black,
@@ -117,36 +177,58 @@ export const styles = StyleSheet.create({
     marginBottom: 4,
   },
 
-  // ── TABLE — CONNECTED (Propela, no gap antar section) ──
-  // Container luar yang bungkus semua dimensi sebagai 1 kesatuan
+  // ── TABLE — PROPELA (cross-page safe) ──────────────────
   propelaTableWrapper: {
     width: "100%",
-    borderWidth: 1,
-    borderColor: COLORS.black,
-    borderTopWidth: 0, // connect ke subBanner di atasnya
     marginBottom: 8,
   },
-  // Dimensi title di dalam propela — jadi row header, bukan block terpisah
+  propelaHeaderRow: {
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: COLORS.black,
+  },
+  propelaDataRow: {
+    flexDirection: "row",
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: COLORS.black,
+  },
   dimensiRow: {
     backgroundColor: COLORS.bgHeader,
     padding: 3,
     fontWeight: "bold",
     fontSize: 10,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.black,
+    borderColor: COLORS.black,
   },
-  // Elemen title di dalam propela — row sub-header
   elemenRow: {
     backgroundColor: COLORS.bgSection,
     padding: 3,
     fontWeight: "bold",
     fontStyle: "italic",
     fontSize: 9,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.black,
+    borderColor: COLORS.black,
   },
 
   // ── TR / TD ─────────────────────────────────────────────
+  // CATATAN v2.11: TIDAK pake alignItems di sini. Default
+  // flex `stretch` WAJIB supaya cell stretch ke tinggi row →
+  // border kanan nyambung dari atas ke bawah. Coba `center`
+  // di v2.10 → border patah, ditolak user. Revert.
+  //
+  // Konsekuensi: text di cell pendek (No, Mapel, NA) align
+  // ke TOP relatif baris terpanjang (Capaian). Ini standar
+  // layout tabel rapor, dan visual-nya rapi karena border
+  // utuh.
   tr: {
     flexDirection: "row",
     borderBottomWidth: 1,
@@ -169,6 +251,24 @@ export const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 8.5,
     textAlign: "center",
+    backgroundColor: COLORS.bgSection,
+  },
+  thLeft: {
+    padding: 3,
+    paddingHorizontal: 6,
+    fontWeight: "bold",
+    fontSize: 8.5,
+    textAlign: "left",
+    borderRightWidth: 1,
+    borderRightColor: COLORS.black,
+    backgroundColor: COLORS.bgSection,
+  },
+  thLeftLast: {
+    padding: 3,
+    paddingHorizontal: 6,
+    fontWeight: "bold",
+    fontSize: 8.5,
+    textAlign: "left",
     backgroundColor: COLORS.bgSection,
   },
   td: {
@@ -207,7 +307,9 @@ export const styles = StyleSheet.create({
   colP5Desc: { width: "64%" },
   colP5Check: { width: "9%" },
 
-  // ── TTD (Lembar 1 — 3 kolom center) ───────────────────
+  // ── TTD (Lembar 1 LAMA — flex no-border, DEAD CODE setelah v2.9
+  //    karena Lembar 1 udah migrate ke ttdTable. Dipertahankan
+  //    untuk kemudahan rollback.) ─────────────────────────
   ttdWrap: {
     marginTop: 16,
     flexDirection: "row",
@@ -240,24 +342,88 @@ export const styles = StyleSheet.create({
     color: COLORS.muted,
   },
 
-  // ── TTD (Propela — posisi KANAN, isi rata KIRI) ──────
-  ttdWrapRight: {
-    marginTop: 16,
+  // ╔════════════════════════════════════════════════════╗
+  // ║ v2.9: TTD TABLE — NO BORDER                        ║
+  // ║                                                    ║
+  // ║ Structure tabel UTUH (5 kolom × 5 baris, cell      ║
+  // ║ widths, padding, alignment, ttdSpaceTall, dst).   ║
+  // ║ Yang berubah cuma borderWidth → 0 di semua style. ║
+  // ║                                                    ║
+  // ║ Dipake di Lembar 1 (Raport) & Lembar 2 (Propela). ║
+  // ╚════════════════════════════════════════════════════╝
+  ttdTable: {
+    width: "100%",
+    marginTop: 8,
+    marginBottom: 10,
+    borderWidth: 0,
+    borderColor: COLORS.black,
+  },
+  ttdTr: {
     flexDirection: "row",
-    justifyContent: "flex-end", // push block ke kanan
+    borderBottomWidth: 0,
+    borderBottomColor: COLORS.black,
+  },
+  ttdTrLast: {
+    flexDirection: "row",
+  },
+  // Cell konten utama (Orang Tua/Wali, Mengetahui, Wali Kelas)
+  ttdTdMain: {
+    width: "31%",
+    padding: 4,
+    fontSize: 9,
+    textAlign: "center",
+    borderRightWidth: 0,
+    borderRightColor: COLORS.black,
+  },
+  // Cell konten paling kanan — no border kanan (dihandle wrapper)
+  ttdTdMainLast: {
+    width: "31%",
+    padding: 4,
+    fontSize: 9,
+    textAlign: "center",
+  },
+  // Cell gutter sempit antar kolom konten
+  ttdTdGutter: {
+    width: "3.5%",
+    padding: 4,
+    borderRightWidth: 0,
+    borderRightColor: COLORS.black,
+  },
+  // Modifier untuk row signature space (taller height)
+  ttdSpaceTall: {
+    minHeight: 45,
+  },
+  // Variant nama bold (untuk row 4 di TTD table)
+  ttdNameBold: {
+    fontWeight: "bold",
+  },
+  // Variant NIP — smaller font, muted
+  ttdNipSmall: {
+    fontSize: 8,
+    color: COLORS.muted,
+  },
+
+  // ── TTD (Propela LAMA — DEAD CODE, dipertahankan utk rollback) ──
+  ttdWrapRight: {
+    marginTop: 8,
+    flexDirection: "row",
+    justifyContent: "flex-end",
   },
   ttdColRightAligned: {
-    width: "45%", // lebar block ~45% halaman
-    alignItems: "flex-start", // isi rata KIRI di dalam block
+    width: "38%",
+    alignItems: "flex-start",
     fontSize: 9,
   },
   ttdLabelLeft: {
     textAlign: "left",
-    marginBottom: 2,
+    marginBottom: 0,
   },
   ttdNameLeft: {
     fontWeight: "bold",
-    textAlign: "left", // nama rata KIRI, bukan center
+    textAlign: "left",
+  },
+  ttdSpaceSmall: {
+    height: 35,
   },
 
   // ── TANGGAL ────────────────────────────────────────────
@@ -267,11 +433,10 @@ export const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 4,
   },
-  // Untuk propela — tanggal di block TTD kanan, rata kiri
   tglLineLeft: {
     fontSize: 9,
     textAlign: "left",
-    marginBottom: 2,
+    marginBottom: 0,
   },
 
   // ── CATATAN BOX (Lembar 1 & Propela Catatan Proses) ───
@@ -296,7 +461,6 @@ export const styles = StyleSheet.create({
   legendBoxBottom: {
     marginTop: 16,
     fontSize: 8.5,
-    // no border — plain text block
   },
   legendTitleBottom: {
     fontWeight: "bold",
