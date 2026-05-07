@@ -1,32 +1,30 @@
 // ============================================================
 // FILE PATH: src/components/features/admin/tab-tahun-kelas.tsx
 // ============================================================
-// REPLACE. v2.4 — integrasi tanggal cetak per paket A/B/C.
+// REPLACE. v2.5 — smart confirm dialog hapus kelas.
 //
-// CHANGELOG vs versi sebelumnya (yang lo share):
+// CHANGELOG vs versi sebelumnya:
 //
-//   1. Imports: TAMBAH 2 baris untuk komponen tanggal cetak
-//      (TanggalCetakGlobalWarning, TanggalCetakRowBadge,
-//       TanggalCetakPaketForm).
+//   1. Imports: TAMBAH useKelasDeletionImpact, AlertDialog primitives,
+//      AlertTriangle icon.
 //
-//   2. TabTahunKelas: TAMBAH <TanggalCetakGlobalWarning /> setelah
-//      toolbar form add tahun, sebelum table list TP. Banner ini
-//      muncul kalau ada minimal 1 TP × paket yang missing tanggal.
+//   2. Confirm hapus kelas: GANTI dari ConfirmDialog generik (yang
+//      cuma kasih copy "semua siswa dan nilai akan ikut terhapus")
+//      jadi DeleteKelasConfirm — komponen baru yang:
+//        - Pre-fetch impact count via useKelasDeletionImpact
+//        - Tampilkan jumlah enrollment + nilai + rapor published
+//        - Warna severity:
+//          • Hijau / muted: kelas kosong, aman
+//          • Amber: ada enrollment + nilai (CASCADE warning)
+//          • Rose: ada rapor published (extra warning + ring tebal)
+//        - Tombol confirm nampilkan jumlah yang bakal kena
 //
-//   3. TahunTableRow: TAMBAH <TanggalCetakRowBadge> di kolom utama
-//      (Tahun & Semester), tampil sebagai row inline di bawah nama
-//      TP — kasih signal merah kalau row ini punya paket yang
-//      belum di-set tanggalnya.
-//
-//   4. DrawerBody: TAMBAH section "Tanggal Cetak Rapor" di atas
-//      list kelas (di body drawer). Berisi form 3 paket dengan
-//      status badge per paket. Admin bisa langsung edit dari sini.
+//   3. ConfirmDialog dari @/components/shared masih dipake untuk
+//      "Confirm hapus tahun" — TIDAK BERUBAH.
 //
 // SEMUA logic existing (hooks, KelolaKelasDrawer, TambahKelasDialog,
-// EditKelasDialog, EnrollmentDialog, ConfirmDialog, KELAS_PARALEL_VALUES,
-// buildNamaKelas helper, dll) PRESERVED tanpa perubahan.
-//
-// Total tambahan: 3 baris import + ~15 baris JSX di 3 lokasi.
+// EditKelasDialog, EnrollmentDialog, KELAS_PARALEL_VALUES,
+// buildNamaKelas helper, TanggalCetakGlobalWarning, dll) PRESERVED.
 // ============================================================
 
 "use client";
@@ -51,6 +49,7 @@ import {
   useCreateKelas,
   useUpdateKelas,
   useDeleteKelas,
+  useKelasDeletionImpact,
 } from "@/hooks";
 import { useIsDesktop } from "@/hooks/use-is-desktop";
 import {
@@ -93,6 +92,16 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ConfirmDialog } from "@/components/shared";
 import {
   Loader2,
@@ -105,6 +114,7 @@ import {
   MoreHorizontal,
   X,
   Calendar,
+  AlertTriangle,
 } from "lucide-react";
 import type { TahunPelajaran, RombonganBelajar } from "@/types";
 import { EnrollmentDialog } from "./enrollment-dialog";
@@ -294,7 +304,7 @@ export function TabTahunKelas() {
         <EditKelasDialog kelas={editKelas} onClose={() => setEditKelas(null)} />
       )}
 
-      {/* Confirm hapus tahun */}
+      {/* Confirm hapus tahun — pakai ConfirmDialog generik */}
       <ConfirmDialog
         open={!!showDeleteTahun}
         onOpenChange={() => setShowDeleteTahun(null)}
@@ -314,22 +324,19 @@ export function TabTahunKelas() {
         }}
       />
 
-      {/* Confirm hapus kelas */}
-      <ConfirmDialog
-        open={!!showDeleteKelas}
-        onOpenChange={() => setShowDeleteKelas(null)}
-        title="Hapus Kelas?"
-        description="Semua siswa dan nilai di kelas ini akan ikut terhapus."
-        confirmLabel="Hapus"
-        variant="destructive"
-        isLoading={deleteKelas.isPending}
-        onConfirm={() => {
-          if (showDeleteKelas)
+      {/* v2.5: Confirm hapus kelas — smart impact preview */}
+      {showDeleteKelas !== null && (
+        <DeleteKelasConfirm
+          kelasId={showDeleteKelas}
+          isPending={deleteKelas.isPending}
+          onConfirm={() =>
             deleteKelas.mutate(showDeleteKelas, {
               onSuccess: () => setShowDeleteKelas(null),
-            });
-        }}
-      />
+            })
+          }
+          onClose={() => setShowDeleteKelas(null)}
+        />
+      )}
 
       {/* Enrollment (kelola siswa) */}
       {manageKelas && (
@@ -346,6 +353,157 @@ export function TabTahunKelas() {
         />
       )}
     </div>
+  );
+}
+
+// ============================================================
+// DeleteKelasConfirm — v2.5
+// ============================================================
+// Smart confirm dialog dengan impact pre-fetch:
+//   - Loading state saat fetch impact count
+//   - Empty state (kelas kosong) → muted, copy "Aman untuk dihapus"
+//   - Has data state → amber warning dengan list count
+//   - Has published rapor → rose warning + ring tebal di tombol
+//
+// Tombol confirm dynamic:
+//   - Empty: "Hapus"
+//   - Has enrollment: "Hapus kelas + N enrollment"
+// ============================================================
+
+function DeleteKelasConfirm({
+  kelasId,
+  isPending,
+  onConfirm,
+  onClose,
+}: {
+  kelasId: number;
+  isPending: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const { data: impact, isLoading } = useKelasDeletionImpact(kelasId);
+
+  const hasData = (impact?.enrollmentCount ?? 0) > 0;
+  const hasPublishedRapor = (impact?.raporPublishedCount ?? 0) > 0;
+  const isDangerous = hasData;
+
+  return (
+    <AlertDialog open onOpenChange={(v) => !v && onClose()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Hapus kelas ini?</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-3">
+              <p>
+                Kelas akan dihapus permanen dari sistem dan tidak bisa di-undo.
+              </p>
+
+              {isLoading ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Memeriksa data terkait…
+                </div>
+              ) : !hasData ? (
+                <div className="rounded-lg border bg-muted/30 p-2.5 text-xs text-muted-foreground">
+                  Tidak ada siswa atau nilai yang terhubung. Aman untuk dihapus.
+                </div>
+              ) : (
+                <div
+                  className={cn(
+                    "rounded-lg border p-3 flex items-start gap-2.5",
+                    hasPublishedRapor
+                      ? "border-rose-300 bg-rose-50"
+                      : "border-amber-300 bg-amber-50"
+                  )}
+                >
+                  <AlertTriangle
+                    className={cn(
+                      "h-4 w-4 flex-shrink-0 mt-0.5",
+                      hasPublishedRapor ? "text-rose-700" : "text-amber-700"
+                    )}
+                  />
+                  <div className="flex-1 min-w-0 text-xs space-y-1.5">
+                    <p
+                      className={cn(
+                        "font-semibold",
+                        hasPublishedRapor ? "text-rose-900" : "text-amber-900"
+                      )}
+                    >
+                      ⚠️ Akan ikut menghapus data berikut:
+                    </p>
+                    <ul
+                      className={cn(
+                        "space-y-0.5 list-disc list-inside",
+                        hasPublishedRapor ? "text-rose-800" : "text-amber-800"
+                      )}
+                    >
+                      <li>
+                        <strong>{impact!.enrollmentCount}</strong> enrollment
+                        {impact!.enrollmentAktifCount > 0 && (
+                          <> ({impact!.enrollmentAktifCount} aktif)</>
+                        )}
+                      </li>
+                      {impact!.nilaiCount > 0 && (
+                        <li>
+                          <strong>{impact!.nilaiCount}</strong> nilai mapel
+                          (CASCADE)
+                        </li>
+                      )}
+                      {hasPublishedRapor && (
+                        <li className="font-semibold">
+                          <strong>{impact!.raporPublishedCount}</strong> rapor
+                          yang sudah <em>published</em> ⚠️
+                        </li>
+                      )}
+                    </ul>
+                    <p
+                      className={cn(
+                        "mt-2 text-[11px]",
+                        hasPublishedRapor ? "text-rose-700" : "text-amber-700"
+                      )}
+                    >
+                      {hasPublishedRapor ? (
+                        <>
+                          Kelas ini punya rapor yang sudah dipublikasi.
+                          Pertimbangkan untuk <strong>tidak menghapus</strong>{" "}
+                          dan biarkan sebagai arsip riwayat.
+                        </>
+                      ) : (
+                        <>
+                          Penilaian P5, ekskul, absensi, dan catatan wali
+                          kelas ikut ke-cascade-delete.
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={isPending}>Batal</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => {
+              e.preventDefault();
+              onConfirm();
+            }}
+            disabled={isPending || isLoading}
+            className={cn(
+              "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+              hasPublishedRapor && "ring-2 ring-rose-400 ring-offset-1"
+            )}
+          >
+            {isPending && (
+              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            )}
+            {isDangerous
+              ? `Hapus kelas + ${impact!.enrollmentCount} enrollment`
+              : "Hapus"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

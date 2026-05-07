@@ -3,30 +3,59 @@
 // ============================================================
 // REPLACE. Perubahan dari versi sebelumnya:
 //
-//   1. DELIMITER AUTO-DETECT — sekarang support semicolon (;)
-//      ATAU comma (,) sebagai pemisah kolom. Auto-detect dari
-//      header row (atau first non-empty line kalau no header).
-//      Rekomendasi pakai semicolon karena nama/alamat Indonesia
-//      sering punya koma (ex: "Ahmad, S.Pd" atau "Jl. X, RT 09")
-//      yang bikin parser comma kacau tanpa quote escape.
+//   1. CSV FORMAT — sekarang 6 kolom (sebelumnya 4):
+//      nama_lengkap;nis;nisn;nama_kelas;jenis_kelamin;agama
 //
-//   2. TEMPLATE DOWNLOAD via static file — sekarang tarik dari
-//      `/import/peserta-didik.csv` (di-serve Next.js dari folder
-//      `public/import/`). Admin bisa edit file template langsung
-//      tanpa rebuild app, dan template jadi single source of truth.
-//      Implementasi: simple anchor click, gak perlu construct Blob
-//      di JS lagi.
+//      Urutan ini dipilih karena match sama format rapor
+//      "Nomor Induk/NISN : 155/0000347149" — admin yang isi CSV
+//      bakal lebih natural ngetiknya.
 //
-//   3. Format guide block: contoh pakai semicolon (sync dengan
-//      template), tambah bullet jelasin delimiter rule.
+//   2. NIS — optional, no format validation, no unique check
+//      (sekolah bebas format, bisa duplikat)
 //
-// Sisa logic (validasi agama, kelas matching, rollback on error,
-// preview table) TIDAK BERUBAH dari versi sebelumnya.
+//   3. NISN — optional, tapi kalau diisi:
+//      a) Trim whitespace, kalau kosong jadi null
+//      b) Cek duplikat ANTAR BARIS di CSV yang sama (tolak)
+//      c) Cek duplikat vs DB existing (tolak — pre-fetch sekali
+//         saat parsing untuk UX yang ramah)
+//      d) Format permissive: terima angka/string apa adanya selama
+//         bukan whitespace doang. Sekolah-sekolah punya format NISN
+//         beda-beda di lapangan, jangan strict.
+//
+//   4. PRE-FETCH EXISTING NISN — saat file di-upload, fetch sekali
+//      semua NISN existing di DB. Validation jalan offline setelah
+//      itu, error muncul di preview SEBELUM admin klik Import.
+//      Race condition kecil (concurrent admin) di-handle di hook
+//      useBulkImportSiswa via UNIQUE constraint DB.
+//
+//   5. PREVIEW TABLE — gabung NIS/NISN jadi 1 kolom dengan format
+//      "155 / 0000347149" (kayak di rapor). Lebih hemat space,
+//      lebih natural buat admin yang udah familiar sama format
+//      rapor PKBM.
+//
+//   6. ERROR MESSAGES — informatif, sebut baris mana yang konflik:
+//      "NISN sudah dipakai siswa lain di CSV ini (baris 5)"
+//      "NISN sudah terdaftar untuk siswa Ahmad Fauzi"
+//
+//   7. BACKWARD COMPAT — TIDAK support format lama 4 kolom.
+//      Kalau admin upload format lama, error message jelas:
+//      "Format CSV tidak valid. Butuh 6 kolom..."
+//      Force admin download template baru biar konsisten.
+//
+//   8. HEADER DETECTION — tambah keyword "nis"/"nisn" di check.
+//
+// Validation order (per row):
+//   1. nama_lengkap (required)
+//   2. nis (optional, trim only)
+//   3. nisn (optional, trim + dupe check antar baris + dupe check DB)
+//   4. nama_kelas (required, match dengan kelas di tahun aktif)
+//   5. jenis_kelamin (required, L/P)
+//   6. agama (required, harus salah satu dari 6 agama)
 // ============================================================
 
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
@@ -51,6 +80,7 @@ import {
   useBulkImportSiswa,
 } from "@/hooks";
 import { AGAMA_VALUES } from "@/lib/validators";
+import { createClient } from "@/lib/supabase/client";
 import {
   Upload,
   FileText,
@@ -68,6 +98,7 @@ import { cn } from "@/lib/utils";
 // ============================================================
 
 const TEMPLATE_URL = "/import/peserta-didik.csv";
+const EXPECTED_COLUMNS = 6;
 
 // ============================================================
 // TYPES
@@ -79,6 +110,8 @@ type Delimiter = ";" | ",";
 interface ParsedRow {
   rowNumber: number;
   nama_lengkap: string;
+  nis: string;
+  nisn: string;
   nama_kelas: string;
   jenis_kelamin: string;
   agama: string;
@@ -87,6 +120,8 @@ interface ParsedRow {
   rombongan_belajar_id?: number;
   jenis_kelamin_normalized?: "L" | "P";
   agama_normalized?: AgamaCanonical;
+  nis_normalized?: string | null;
+  nisn_normalized?: string | null;
 }
 
 interface Props {
@@ -108,12 +143,6 @@ function normalizeAgama(raw: string): AgamaCanonical | undefined {
 
 // ============================================================
 // CSV PARSER — manual, no deps
-// ============================================================
-//
-// Delimiter detection: count semicolon vs comma di line, pick
-// yang lebih banyak. Default ke ";" kalau tie atau zero (artinya
-// 1 kolom doang — file gak valid format-nya, tapi parser tetap
-// jalan biar error-nya muncul di validasi field-by-field).
 // ============================================================
 
 function detectDelimiter(line: string): Delimiter {
@@ -156,8 +185,17 @@ function isHeaderRow(cells: string[]): boolean {
     lower.includes("nama") &&
     (lower.includes("kelas") ||
       lower.includes("jenis") ||
-      lower.includes("agama"))
+      lower.includes("agama") ||
+      lower.includes("nis") ||
+      lower.includes("nisn"))
   );
+}
+
+// Normalize NIS/NISN: trim, kalau kosong/whitespace doang → null
+function normalizeNisNisn(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  return trimmed;
 }
 
 // ============================================================
@@ -171,6 +209,7 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
   const [parseError, setParseError] = useState<string | null>(null);
   const [detectedDelimiter, setDetectedDelimiter] =
     useState<Delimiter | null>(null);
+  const [isPrefetching, setIsPrefetching] = useState(false);
 
   const { data: tahunAktif } = useTahunPelajaranAktif();
   const { data: kelasList = [] } = useAllKelas();
@@ -203,6 +242,7 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
     setFileName("");
     setParseError(null);
     setDetectedDelimiter(null);
+    setIsPrefetching(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -210,6 +250,28 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
     if (!v) reset();
     onOpenChange(v);
   };
+
+  // ──────────────────────────────────────────────────────────
+  // Pre-fetch existing NISN dari DB sekali, untuk validation
+  // offline yang fast & ramah ke UX. Race condition kecil
+  // (concurrent admin) di-handle di hook via UNIQUE constraint.
+  // ──────────────────────────────────────────────────────────
+  const fetchExistingNisns = useCallback(async (): Promise<Map<string, string>> => {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("peserta_didik")
+      .select("nisn, nama_lengkap")
+      .not("nisn", "is", null);
+    if (error) throw error;
+
+    const map = new Map<string, string>();
+    (data ?? []).forEach((row) => {
+      if (row.nisn) {
+        map.set(row.nisn, row.nama_lengkap);
+      }
+    });
+    return map;
+  }, []);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -226,17 +288,23 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
 
     setFileName(file.name);
     setParseError(null);
+    setIsPrefetching(true);
 
     try {
       const text = await file.text();
-      parseCsv(text);
+      // Pre-fetch existing NISN sebelum parse, biar bisa validate
+      // duplicate check vs DB
+      const existingNisns = await fetchExistingNisns();
+      parseCsv(text, existingNisns);
     } catch (err) {
       const e = err as Error;
       setParseError("Gagal baca file: " + e.message);
+    } finally {
+      setIsPrefetching(false);
     }
   };
 
-  const parseCsv = (text: string) => {
+  const parseCsv = (text: string, existingNisns: Map<string, string>) => {
     const lines = text
       .split(/\r?\n/)
       .map((l) => l.trim())
@@ -247,7 +315,6 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
       return;
     }
 
-    // ─── Detect delimiter dari first line ───────────────
     const delimiter = detectDelimiter(lines[0]);
     setDetectedDelimiter(delimiter);
 
@@ -264,20 +331,80 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
       return;
     }
 
-    const rows: ParsedRow[] = dataLines.map((line, idx) => {
-      const rowNumber = startIdx + idx + 1;
-      const cells = parseCsvLine(line, delimiter);
+    // ─── PASS 1: Parse semua baris dulu ─────────────────────
+    const tempRows: Array<{
+      rowNumber: number;
+      cells: string[];
+    }> = dataLines.map((line, idx) => ({
+      rowNumber: startIdx + idx + 1,
+      cells: parseCsvLine(line, delimiter),
+    }));
 
+    // ─── Build NISN tracker untuk dupe check antar baris ───
+    // key: nisn, value: { firstRowNumber, count }
+    const nisnTracker = new Map<
+      string,
+      { firstRowNumber: number; count: number }
+    >();
+    tempRows.forEach((r) => {
+      const nisnRaw = (r.cells[2] ?? "").trim();
+      if (nisnRaw.length > 0) {
+        const existing = nisnTracker.get(nisnRaw);
+        if (existing) {
+          existing.count++;
+        } else {
+          nisnTracker.set(nisnRaw, { firstRowNumber: r.rowNumber, count: 1 });
+        }
+      }
+    });
+
+    // ─── PASS 2: Validate setiap baris ──────────────────────
+    const rows: ParsedRow[] = tempRows.map(({ rowNumber, cells }) => {
+      // 6 kolom: nama_lengkap, nis, nisn, nama_kelas, jenis_kelamin, agama
       const nama_lengkap = (cells[0] ?? "").trim();
-      const nama_kelas = (cells[1] ?? "").trim();
-      const jenis_kelamin = (cells[2] ?? "").trim();
-      const agama = (cells[3] ?? "").trim();
+      const nis = (cells[1] ?? "").trim();
+      const nisn = (cells[2] ?? "").trim();
+      const nama_kelas = (cells[3] ?? "").trim();
+      const jenis_kelamin = (cells[4] ?? "").trim();
+      const agama = (cells[5] ?? "").trim();
 
       const errors: string[] = [];
+
+      // ─── Validasi jumlah kolom ───────────────────────
+      if (cells.length < EXPECTED_COLUMNS) {
+        errors.push(
+          `Baris hanya punya ${cells.length} kolom, butuh ${EXPECTED_COLUMNS} kolom (nama, nis, nisn, kelas, jk, agama)`
+        );
+      }
 
       // ─── Validasi nama ───────────────────────────────
       if (!nama_lengkap) {
         errors.push("Nama kosong");
+      }
+
+      // ─── Validasi NIS ────────────────────────────────
+      // NIS optional, no format check, no unique check
+      const nisNormalized = normalizeNisNisn(nis);
+
+      // ─── Validasi NISN ───────────────────────────────
+      // NISN optional, tapi kalau diisi: cek dupe antar baris + cek dupe DB
+      const nisnNormalized = normalizeNisNisn(nisn);
+      if (nisnNormalized) {
+        // Dupe check antar baris di CSV ini
+        const tracker = nisnTracker.get(nisnNormalized);
+        if (tracker && tracker.count > 1) {
+          errors.push(
+            `NISN "${nisnNormalized}" duplikat di CSV ini (pertama muncul di baris ${tracker.firstRowNumber})`
+          );
+        }
+
+        // Dupe check vs DB existing
+        const existingName = existingNisns.get(nisnNormalized);
+        if (existingName) {
+          errors.push(
+            `NISN "${nisnNormalized}" sudah terdaftar untuk siswa "${existingName}"`
+          );
+        }
       }
 
       // ─── Validasi jenis kelamin ──────────────────────
@@ -319,6 +446,8 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
       return {
         rowNumber,
         nama_lengkap,
+        nis,
+        nisn,
         nama_kelas,
         jenis_kelamin,
         agama,
@@ -327,6 +456,8 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
         rombongan_belajar_id: matchedKelas?.id,
         jenis_kelamin_normalized: jkNormalized,
         agama_normalized: agamaNormalized,
+        nis_normalized: nisNormalized,
+        nisn_normalized: nisnNormalized,
       };
     });
 
@@ -340,6 +471,8 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
       nama_lengkap: r.nama_lengkap,
       jenis_kelamin: r.jenis_kelamin_normalized!,
       agama: r.agama_normalized!,
+      nis: r.nis_normalized ?? null,
+      nisn: r.nisn_normalized ?? null,
       rombongan_belajar_id: r.rombongan_belajar_id!,
     }));
 
@@ -401,7 +534,7 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
           <div className="rounded-lg border bg-blue-50/50 p-3 space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <p className="text-xs font-medium text-blue-900">
-                Format CSV (4 kolom, delimiter <code>;</code>)
+                Format CSV (6 kolom, delimiter <code>;</code>)
               </p>
               <Button
                 asChild
@@ -416,10 +549,10 @@ export function ImportSiswaDialog({ open, onOpenChange }: Props) {
               </Button>
             </div>
             <pre className="text-[11px] font-mono bg-white border rounded p-2 overflow-x-auto">
-              {`nama_lengkap;nama_kelas;jenis_kelamin;agama
-Ahmad Fauzi;Kelas 12A;L;Islam
-Cindy Rahayu;Kelas 12A;P;Kristen
-Maria Theresa;Kelas 11B;P;Katolik`}
+              {`nama_lengkap;nis;nisn;nama_kelas;jenis_kelamin;agama
+Ahmad Fauzi;155;0000347149;Kelas 12A;L;Islam
+Cindy Rahayu;156;0000347150;Kelas 12A;P;Kristen
+Maria Theresa;202;0000347152;Kelas 11B;P;Katolik`}
             </pre>
             <ul className="text-[11px] text-blue-900 space-y-0.5 list-disc list-inside">
               <li>
@@ -429,7 +562,15 @@ Maria Theresa;Kelas 11B;P;Katolik`}
               </li>
               <li>
                 Header row optional (auto-skip kalau ada keyword
-                &quot;nama&quot;)
+                &quot;nama&quot;/&quot;nis&quot;/&quot;nisn&quot;)
+              </li>
+              <li>
+                <strong>NIS</strong>: opsional, format bebas (sekolah bisa
+                pakai format sendiri)
+              </li>
+              <li>
+                <strong>NISN</strong>: opsional, harus unik per siswa. Sistem
+                auto-cek duplikat di CSV ini dan terhadap data existing.
               </li>
               <li>
                 Jenis kelamin: <strong>L</strong> atau <strong>P</strong>{" "}
@@ -455,7 +596,8 @@ Maria Theresa;Kelas 11B;P;Katolik`}
               className={cn(
                 "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 cursor-pointer transition-colors",
                 "hover:bg-muted/40",
-                hasParsed ? "border-primary/30 bg-primary/5" : "border-muted"
+                hasParsed ? "border-primary/30 bg-primary/5" : "border-muted",
+                isPrefetching && "pointer-events-none opacity-60"
               )}
             >
               <input
@@ -463,31 +605,43 @@ Maria Theresa;Kelas 11B;P;Katolik`}
                 type="file"
                 accept=".csv,text/csv"
                 onChange={handleFileChange}
-                disabled={!tahunAktif || bulkImport.isPending}
+                disabled={!tahunAktif || bulkImport.isPending || isPrefetching}
                 className="sr-only"
               />
-              <FileText
-                className={cn(
-                  "h-8 w-8",
-                  hasParsed ? "text-primary" : "text-muted-foreground"
-                )}
-              />
-              {fileName ? (
+              {isPrefetching ? (
                 <>
-                  <p className="text-sm font-medium">{fileName}</p>
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p className="text-sm font-medium">Memeriksa data NISN...</p>
                   <p className="text-xs text-muted-foreground">
-                    {detectedDelimiter
-                      ? `Delimiter terdeteksi: "${detectedDelimiter}" · `
-                      : ""}
-                    Klik untuk ganti file
+                    Validasi duplikat dengan database
                   </p>
                 </>
               ) : (
                 <>
-                  <p className="text-sm font-medium">Pilih file CSV</p>
-                  <p className="text-xs text-muted-foreground">
-                    atau drag &amp; drop di sini
-                  </p>
+                  <FileText
+                    className={cn(
+                      "h-8 w-8",
+                      hasParsed ? "text-primary" : "text-muted-foreground"
+                    )}
+                  />
+                  {fileName ? (
+                    <>
+                      <p className="text-sm font-medium">{fileName}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {detectedDelimiter
+                          ? `Delimiter terdeteksi: "${detectedDelimiter}" · `
+                          : ""}
+                        Klik untuk ganti file
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-medium">Pilih file CSV</p>
+                      <p className="text-xs text-muted-foreground">
+                        atau drag &amp; drop di sini
+                      </p>
+                    </>
+                  )}
                 </>
               )}
             </label>
@@ -500,7 +654,7 @@ Maria Theresa;Kelas 11B;P;Katolik`}
             )}
           </div>
 
-          {/* Preview — TABLE 5 kolom dengan header + border */}
+          {/* Preview — TABLE 6 kolom (NIS/NISN gabung jadi 1 kolom) */}
           {hasParsed && (
             <div className="space-y-2">
               <div className="flex items-center justify-between flex-wrap gap-2">
@@ -533,6 +687,7 @@ Maria Theresa;Kelas 11B;P;Katolik`}
                     <TableRow>
                       <TableHead className="w-12 text-center">#</TableHead>
                       <TableHead>Nama Lengkap</TableHead>
+                      <TableHead className="w-[150px]">NIS / NISN</TableHead>
                       <TableHead className="w-[140px]">Kelas</TableHead>
                       <TableHead className="w-14 text-center">JK</TableHead>
                       <TableHead className="w-24 text-center">Agama</TableHead>
@@ -584,10 +739,20 @@ Maria Theresa;Kelas 11B;P;Katolik`}
 
 // ============================================================
 // Preview Row — table row dengan optional error sub-row
+// NIS/NISN ditampilkan format "155 / 0000347149" (kayak rapor)
 // ============================================================
 
 function PreviewRow({ row }: { row: ParsedRow }) {
   const rowBg = row.isValid ? "" : "bg-red-50/60 hover:bg-red-50/80";
+
+  // Format NIS/NISN: "155 / 0000347149"
+  // Kalau NIS kosong: "— / 0000347149"
+  // Kalau NISN kosong: "155 / —"
+  // Kalau kedua kosong: "—"
+  const nisDisplay = row.nis_normalized ?? "—";
+  const nisnDisplay = row.nisn_normalized ?? "—";
+  const showNisNisn = row.nis_normalized || row.nisn_normalized;
+  const hasNisnError = row.errors.some((e) => e.toLowerCase().includes("nisn"));
 
   return (
     <>
@@ -613,6 +778,21 @@ function PreviewRow({ row }: { row: ParsedRow }) {
           </div>
         </TableCell>
         <TableCell className="text-sm">
+          {showNisNisn ? (
+            <span
+              className={cn(
+                "font-mono text-xs tabular-nums",
+                hasNisnError && "text-red-600"
+              )}
+              title={`NIS: ${nisDisplay} | NISN: ${nisnDisplay}`}
+            >
+              {nisDisplay} / {nisnDisplay}
+            </span>
+          ) : (
+            <em className="italic text-muted-foreground text-xs">—</em>
+          )}
+        </TableCell>
+        <TableCell className="text-sm">
           {row.nama_kelas || (
             <em className="italic text-muted-foreground">(kosong)</em>
           )}
@@ -636,7 +816,7 @@ function PreviewRow({ row }: { row: ParsedRow }) {
       {!row.isValid && row.errors.length > 0 && (
         <TableRow className={cn(rowBg, "hover:bg-red-50/80")}>
           <TableCell />
-          <TableCell colSpan={4} className="pt-0 pb-2">
+          <TableCell colSpan={5} className="pt-0 pb-2">
             <div className="space-y-0.5">
               {row.errors.map((err, i) => (
                 <p

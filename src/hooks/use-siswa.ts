@@ -3,17 +3,21 @@
 // ============================================================
 // REPLACE. Perubahan dari versi sebelumnya:
 //
-//   FIX BUG: useBulkImportSiswa sebelumnya hardcode `agama: "Islam"`
-//   sebagai placeholder. Itu bikin semua siswa yang di-impor lewat
-//   CSV ketag salah agama-nya — siswa Kristen/Katolik/dll jadi
-//   tag "Islam" di DB, dan mapel Pendidikan Agama mereka gak muncul
-//   di form penilaian (karena filter mata_pelajaran.agama matching
-//   peserta_didik.agama).
+//   FIX FEATURE: useBulkImportSiswa sekarang terima NIS & NISN
+//   eksplisit dari caller. Sebelumnya cuma terima nama, JK, agama,
+//   dan kelas — NIS/NISN gak ke-pass jadi siswa baru selalu null
+//   buat 2 field itu.
 //
-//   Sekarang: signature `rows` butuh field `agama` eksplisit dari
-//   caller. Caller (import-siswa-dialog.tsx) udah parse + validasi
-//   agama dari kolom CSV ke-4 + normalisasi ke canonical form sebelum
-//   manggil mutate.
+//   Sekarang:
+//   1. Signature `rows` butuh field `nis: string | null` dan
+//      `nisn: string | null`. Caller (import-siswa-dialog.tsx)
+//      udah validasi + normalisasi (trim, dupe check antar baris,
+//      dupe check vs DB existing) sebelum manggil mutate.
+//   2. Insert payload include `nis` + `nisn`.
+//   3. Error handling: kalau insert fail karena UNIQUE violation
+//      di NISN (race condition concurrent admin), parse error
+//      message biar admin tau NISN mana yang konflik dan kasih
+//      saran retry.
 //
 // Sisa hooks (usePesertaDidik, useCreateEnrollment, dst) TIDAK
 // BERUBAH dari versi sebelumnya.
@@ -118,7 +122,6 @@ export function useUpdatePesertaDidik() {
   });
 }
 
-// FIX: hapus .order("peserta_didik(nama_lengkap)"), sort client-side
 export function useEnrollmentByKelas(kelasId: number | null) {
   const supabase = createClient();
   return useQuery({
@@ -192,12 +195,18 @@ export function useUpdateEnrollmentStatus() {
 // Bulk insert peserta_didik + bulk insert enrollment (atomic-ish:
 // kalau enrollment fail, rollback siswa yang baru dibuat di batch ini).
 //
-// FIX v2: agama sekarang field eksplisit per row, bukan hardcoded.
-// Caller WAJIB pass agama yang udah di-validasi+normalisasi ke
-// canonical form (Islam/Kristen/Katolik/Hindu/Buddha/Konghucu).
-// Kalo input agama invalid, DB CHECK constraint bakal reject —
-// tapi validator client-side (import-siswa-dialog) udah catch
-// duluan sebelum reach hook ini.
+// FEATURE v3 (current): NIS & NISN sekarang ikut di-pass dari caller.
+// Caller (import-siswa-dialog) udah:
+//   - Trim whitespace, kalau kosong jadi null
+//   - Cek dupe NISN antar baris di CSV yang sama
+//   - Cek dupe NISN vs DB existing (pre-fetch)
+//
+// Hook ini cuma handle:
+//   - Insert ke peserta_didik dengan field nis & nisn
+//   - Catch UNIQUE violation race condition (kalau ada concurrent
+//     admin yang insert NISN sama persis di window kecil antara
+//     pre-fetch dan submit)
+//   - Rollback siswa kalau enrollment fail
 //
 // Strategy:
 //   1. Insert semua peserta_didik sekaligus (1 query)
@@ -207,6 +216,16 @@ export function useUpdateEnrollmentStatus() {
 //      dibuat di batch ini (rollback manual karena Supabase JS
 //      client gak punya transaction support)
 // ============================================================
+
+// Helper: parse Postgres UNIQUE violation pesan untuk extract NISN
+// yang konflik. Format pesan biasanya:
+//   "duplicate key value violates unique constraint
+//    \"peserta_didik_nisn_key\"
+//    DETAIL: Key (nisn)=(0000347149) already exists."
+function parseUniqueNisnViolation(errorMsg: string): string | null {
+  const match = errorMsg.match(/Key \(nisn\)=\(([^)]+)\) already exists/i);
+  return match?.[1] ?? null;
+}
 
 export function useBulkImportSiswa() {
   const supabase = createClient();
@@ -218,6 +237,8 @@ export function useBulkImportSiswa() {
         nama_lengkap: string;
         jenis_kelamin: "L" | "P";
         agama: AgamaCanonical;
+        nis: string | null;
+        nisn: string | null;
         rombongan_belajar_id: number;
       }>;
       tahun_pelajaran_id: number;
@@ -226,12 +247,16 @@ export function useBulkImportSiswa() {
         return { inserted: 0 };
       }
 
-      // 1. Insert peserta_didik — agama dari input, BUKAN hardcoded.
-      //    Schema enforce: agama NOT NULL + CHECK 6 values.
+      // 1. Insert peserta_didik dengan NIS & NISN dari input.
+      //    DB enforce UNIQUE pada nisn — kalau ada race condition
+      //    (concurrent admin), insert akan fail dan kita parse
+      //    error message untuk kasih feedback yang berguna.
       const siswaPayload = payload.rows.map((r) => ({
         nama_lengkap: r.nama_lengkap,
         jenis_kelamin: r.jenis_kelamin,
         agama: r.agama,
+        nis: r.nis,
+        nisn: r.nisn,
         is_aktif: true,
       }));
 
@@ -239,7 +264,18 @@ export function useBulkImportSiswa() {
         .from("peserta_didik")
         .insert(siswaPayload)
         .select("id");
-      if (e1) throw e1;
+
+      if (e1) {
+        // Cek apakah ini UNIQUE violation di NISN (race condition)
+        const conflictNisn = parseUniqueNisnViolation(e1.message);
+        if (conflictNisn) {
+          throw new Error(
+            `NISN "${conflictNisn}" sudah terdaftar (kemungkinan ada admin lain yang baru saja menambahkan siswa). Silakan refresh dan coba lagi.`
+          );
+        }
+        throw new Error("Gagal insert siswa: " + e1.message);
+      }
+
       if (!insertedSiswa || insertedSiswa.length === 0) {
         throw new Error("Gagal insert siswa: response kosong");
       }

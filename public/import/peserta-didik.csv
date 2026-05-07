@@ -1,7 +1,9 @@
-nama_lengkap;nama_kelas;jenis_kelamin;agama
-Ahmad Fauzi;Kelas 12A;L;Islam
-Cindy Rahayu;Kelas 12A;P;Kristen
-Budi Santoso;Kelas 11B;L;Islam
-Maria Theresa;Kelas 11B;P;Katolik
-Made Wirawan;Kelas 10A;L;Hindu
-Lin Mei Hua;Kelas 10A;P;Buddha
+nama_lengkap;nis;nisn;nama_kelas;jenis_kelamin;agama
+Ahmad Fauzi;155;0000347149;Kelas 12A;L;Islam
+Cindy Rahayu;156;0000347150;Kelas 12A;P;Kristen
+Budi Santoso;201;0000347151;Kelas 11B;L;Islam
+Maria Theresa;202;0000347152;Kelas 11B;P;Katolik
+Made Wirawan;301;0000347153;Kelas 10A;L;Hindu
+Lin Mei Hua;302;0000347154;Kelas 10A;P;Buddha
+Siti Nurhaliza;157;;Kelas 12A;P;Islam
+Raden Bagus;;0000347155;Kelas 11B;L;Islam

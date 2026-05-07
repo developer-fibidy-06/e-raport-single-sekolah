@@ -1,9 +1,21 @@
 // ============================================================
 // FILE PATH: src/hooks/use-kelas.ts
 // ============================================================
-// REPLACE file lama. Perubahan:
-//   - Hapus relasi `wali_kelas:user_profiles(...)` dari select
-//   - `wali_kelas` sekarang kolom text, ikut di row langsung
+// REPLACE. Perubahan dari versi sebelumnya:
+//
+//   useDeleteKelas: tambah error parsing untuk FK violation (23503).
+//   Setelah migration v2.5 (CASCADE), error 23503 dari FK
+//   enrollment_rombongan_belajar_id_fkey seharusnya gak muncul
+//   lagi. Tapi kalau ada FK lain yang belum CASCADE (misal admin
+//   bikin custom FK di luar schema standar), pesan errornya lebih
+//   informatif daripada raw Supabase message.
+//
+//   Tambah invalidate queries untuk child tables setelah delete:
+//     - enrollment, nilai_mapel, penilaian_p5, rapor_header,
+//       kelas_deletion_impact
+//
+//   Hooks lain (useKelasByTahun, useAllKelas, useCreateKelas,
+//   useUpdateKelas) PRESERVED tanpa perubahan.
 // ============================================================
 
 "use client";
@@ -76,7 +88,13 @@ export function useUpdateKelas() {
   const supabase = createClient();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, values }: { id: number; values: Partial<RombonganBelajarFormData> }) => {
+    mutationFn: async ({
+      id,
+      values,
+    }: {
+      id: number;
+      values: Partial<RombonganBelajarFormData>;
+    }) => {
       const payload: Partial<RombonganBelajarFormData> = { ...values };
       if ("wali_kelas" in payload) {
         payload.wali_kelas =
@@ -84,7 +102,10 @@ export function useUpdateKelas() {
             ? payload.wali_kelas.trim() || null
             : payload.wali_kelas;
       }
-      const { error } = await supabase.from("rombongan_belajar").update(payload).eq("id", id);
+      const { error } = await supabase
+        .from("rombongan_belajar")
+        .update(payload)
+        .eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -95,18 +116,62 @@ export function useUpdateKelas() {
   });
 }
 
+// ============================================================
+// useDeleteKelas — dengan error parsing FK violation
+// ============================================================
+// Setelah migration ON DELETE CASCADE, delete kelas akan auto-nuke
+// enrollment + child-nya (nilai_mapel, penilaian_p5, ekstrakurikuler,
+// dst). Kalau masih ada FK violation, kemungkinan:
+//   - Migration belum jalan (FK masih RESTRICT)
+//   - Ada custom FK di luar schema standar
+// Error message di-translate ke bahasa user-friendly.
+// ============================================================
+
+function isFkViolation(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as { code?: string; message?: string };
+  if (e.code === "23503") return true;
+  if (e.message && /foreign key|violates.*constraint/i.test(e.message)) {
+    return true;
+  }
+  return false;
+}
+
 export function useDeleteKelas() {
   const supabase = createClient();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: number) => {
-      const { error } = await supabase.from("rombongan_belajar").delete().eq("id", id);
-      if (error) throw error;
+      const { error } = await supabase
+        .from("rombongan_belajar")
+        .delete()
+        .eq("id", id);
+      if (error) {
+        if (isFkViolation(error)) {
+          throw new Error(
+            "Tidak bisa hapus kelas: masih ada data terkait yang belum di-cascade. " +
+            "Pastikan migration v2.5 (ON DELETE CASCADE) sudah dijalankan di Supabase, " +
+            "atau hubungi admin teknis."
+          );
+        }
+        throw error;
+      }
     },
     onSuccess: () => {
+      // Invalidate kelas list
       qc.invalidateQueries({ queryKey: QK.all });
-      toast.success("Kelas dihapus");
+      // Invalidate semua child cache karena CASCADE delete
+      qc.invalidateQueries({ queryKey: ["enrollment"] });
+      qc.invalidateQueries({ queryKey: ["nilai_mapel"] });
+      qc.invalidateQueries({ queryKey: ["penilaian_p5"] });
+      qc.invalidateQueries({ queryKey: ["catatan_p5"] });
+      qc.invalidateQueries({ queryKey: ["ekstrakurikuler"] });
+      qc.invalidateQueries({ queryKey: ["ketidakhadiran"] });
+      qc.invalidateQueries({ queryKey: ["catatan_wali_kelas"] });
+      qc.invalidateQueries({ queryKey: ["rapor_header"] });
+      qc.invalidateQueries({ queryKey: ["kelas_deletion_impact"] });
+      toast.success("Kelas dan semua data terkait berhasil dihapus");
     },
-    onError: (err: Error) => toast.error("Gagal menghapus: " + err.message),
+    onError: (err: Error) => toast.error(err.message),
   });
 }

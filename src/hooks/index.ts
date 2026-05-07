@@ -1,23 +1,14 @@
 // ============================================================
 // FILE PATH: src/hooks/index.ts
 // ============================================================
-// REPLACE versi sebelumnya. Tambah export use-tanggal-cetak-paket.
+// REPLACE versi sebelumnya. Tambah export use-kelas-deletion-impact.
 //
-// CATATAN: Kalau file index.ts lo bedanya gede dari versi ini
-// (karena ada hook baru yang gw gak liat), JANGAN replace utuh.
-// Cukup tambah baris di bagian bawah:
-//
-//   export {
-//     useTanggalCetakByTP,
-//     useTanggalCetakByTPDanPaket,
-//     useTPMissingTanggalCetak,
-//     useUpsertTanggalCetak,
-//     useDeleteTanggalCetak,
-//     PAKET_LIST,
-//     type PaketType,
-//     type TanggalCetakMap,
-//     type TanggalCetakRow,
-//   } from "./use-tanggal-cetak-paket";
+// CHANGELOG:
+//   v2.5: + useKelasDeletionImpact (pre-fetch impact count buat
+//         confirm dialog hapus kelas)
+//   v2.4: + useTanggalCetakByTP, useTanggalCetakByTPDanPaket,
+//         useTPMissingTanggalCetak, useUpsertTanggalCetak,
+//         useDeleteTanggalCetak (tanggal cetak per paket)
 // ============================================================
 
 export { useAuth } from "./use-auth";
@@ -145,7 +136,7 @@ export {
   type AdminUser,
 } from "./use-users";
 
-// ── NEW v2.4: Tanggal cetak per paket ───────────────────────
+// Tanggal cetak per paket
 export {
   useTanggalCetakByTP,
   useTanggalCetakByTPDanPaket,
@@ -157,3 +148,9 @@ export {
   type TanggalCetakMap,
   type TanggalCetakRow,
 } from "./use-tanggal-cetak-paket";
+
+// ── NEW v2.5: Kelas deletion impact pre-check ───────────────
+export {
+  useKelasDeletionImpact,
+  type KelasDeletionImpact,
+} from "./use-kelas-deletion-impact";
