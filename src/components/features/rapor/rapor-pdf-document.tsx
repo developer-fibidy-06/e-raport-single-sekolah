@@ -1,69 +1,48 @@
 // ============================================================
 // FILE PATH: src/components/features/rapor/rapor-pdf-document.tsx
 // ============================================================
-// REPLACE. v2.12 — REPEATING TABLE HEADER di Lembar 2 (Propela)
-// untuk handle tabel yg pecah cross-page.
+// REPLACE. v2.13 — FORMAT NIS/NISN GABUNGAN (konsisten Lembar 1 & 2).
 //
-// Problem: kalau sub-elemen P5 banyak → tabel mecah ke halaman
-// ke-2 → di halaman 2 langsung muncul data row tanpa header
-// "Sub-elemen | MB | SB | BSH | SAB" → user bingung kolom mana
-// yang mana.
+// Perubahan dari v2.12:
 //
-// Fix: tambah `fixed` prop ke `<View style={propelaHeaderRow}>`.
-// Di React-PDF, `fixed` adalah special prop yang bikin element
-// di-replicate otomatis di setiap halaman saat parent (Page) di-
-// render. Beda dgn CSS `position: fixed` biasa — ini render-time
-// behavior, bukan layout absolute.
+//   1. ADD helper `formatNomorInduk(nis, nisn)`:
+//      - Output: "025/3170093456" (tanpa spasi separator)
+//      - Edge case kosong: ganti dengan "-"
+//        • "025/-"         (NIS ada, NISN kosong)
+//        • "-/3170093456"  (NIS kosong, NISN ada)
+//        • "-/-"           (dua-duanya kosong)
+//      - Auto-trim whitespace dari input
 //
-// Hasil: di halaman 1 header muncul sekali (di posisi flow normal),
-// di halaman 2/3/dst header muncul lagi di top of continuation
-// tabel. Tidak dobel di halaman 1 karena React-PDF handle di-
-// duplikasi-nya pintar (cuma replicate untuk halaman tambahan).
+//   2. LEMBAR 1 (LembarRaportPage):
+//      Sebelumnya: value={`${pd?.nis ?? "-"} / ${pd?.nisn ?? "-"}`}
+//                  → "025 / 3170093456" (dengan spasi)
+//      Sekarang:   value={formatNomorInduk(pd?.nis, pd?.nisn)}
+//                  → "025/3170093456" (tanpa spasi)
 //
-// wrap={false} tetap dipertahankan supaya header gak ke-split
-// tengah-tengah baris.
+//   3. LEMBAR 2 (LembarPropelaPage):
+//      Sebelumnya: value={pd?.nisn ?? "-"}
+//                  → cuma NISN doang (BUG, inconsistent vs Lembar 1)
+//      Sekarang:   value={formatNomorInduk(pd?.nis, pd?.nisn)}
+//                  → "025/3170093456" (gabung NIS+NISN, sama dgn Lembar 1)
 //
-// Berdampak HANYA ke Lembar 2 (Propela). Lembar 1 (tabel mapel)
-// tidak dirubah karena udah pake <View break> manual untuk
-// section Ketidakhadiran.
+//   4. LABEL DIUBAH: "Nomor Induk / NISN" → "Nomor Induk/NISN"
+//      (tanpa spasi di slash, match reference asli rapor PKBM)
+//
+//   Schema DB tetep 2 kolom terpisah (peserta_didik.nis + .nisn).
+//   Form input + CSV import tetep 2 field. Cuma display rapor PDF
+//   yang gabung jadi 1 baris.
+//
+// CHANGELOG v2.12 (preserved):
+//   REPEATING TABLE HEADER di Lembar 2 (Propela) untuk handle tabel
+//   yg pecah cross-page. Pake `fixed` prop di propelaHeaderRow.
 //
 // CHANGELOG v2.9 (preserved):
-// TTD Lembar 1 (Raport) NOW JUGA PAKE TABLE GRID
-// dengan VISIBLE BORDERS, persis sama kayak Lembar 2 (Propela)
-// yang udah di-approve user di v2.8.
-//
-// Perubahan dari v2.8:
-//
-//   1. TTD LEMBAR 1 (LembarRaportPage) — FLEX → TABLE GRID:
-//      v2.8 masih pake flexbox `ttdWrap` 3-kolom no-border.
-//      v2.9 pake `ttdTable` 5-kolom × 5-baris dengan border
-//      hitam visible — IDENTIK dengan Lembar 2.
-//
-//   2. TANGGAL DI-MERGE KE DALAM CELL ROW 1 KOLOM 5:
-//      Sebelumnya tanggal pake `<Text style={tglLine}>` sebagai
-//      baris terpisah di atas TTD. Sekarang tanggal masuk ke
-//      DALAM cell Row 1 Kolom 5 TTD table — match struktur
-//      Lembar 2 dan PDF reference asli.
-//
-//      Block `<Text style={styles.tglLine}>...</Text>` yang
-//      di atas TTD wrap LAMA udah DIHAPUS.
-//
-//   3. STYLES YANG DIPAKE (tidak ada style baru):
-//      Semua reuse dari v2.8: ttdTable, ttdTr, ttdTrLast,
-//      ttdTdMain, ttdTdMainLast, ttdTdGutter, ttdSpaceTall,
-//      ttdNameBold, ttdNipSmall.
-//
-//   4. CATATAN — STYLES LAMA (ttdWrap, ttdCol, ttdColCenter,
-//      ttdLabel, ttdSpace, ttdName, ttdSub) JADI DEAD CODE
-//      di rapor-pdf-styles.ts setelah v2.9 ini, tapi tidak
-//      dihapus untuk memudahkan rollback bila perlu.
+//   TTD Lembar 1 (Raport) NOW JUGA PAKE TABLE GRID dengan VISIBLE
+//   BORDERS, persis sama kayak Lembar 2 (Propela).
 //
 // CHANGELOG v2.8 (preserved):
 //   - Lembar 2 TTD pake ttdTable grid (5×5, border visible)
 //   - Tanggal masuk Row 1 Kolom 5 di Lembar 2
-//
-// CHANGELOG v2.7 (preserved):
-//   - Lembar 2 TTD pake ttdWrap/ttdCol — DI-OVERRIDE v2.8
 //
 // CHANGELOG v2.6 (preserved):
 //   - Ketidakhadiran ALWAYS halaman 2 via <View break>
@@ -188,6 +167,30 @@ function semesterLabel(s: number): string {
   return s === 1 ? "1 (Ganjil)" : "2 (Genap)";
 }
 
+/**
+ * Format NIS/NISN untuk display di rapor.
+ * Output: "025/3170093456" (tanpa spasi separator).
+ * Kalau salah satu/dua-duanya kosong → ganti dengan "-".
+ *   - "025/-"          (NIS ada, NISN kosong)
+ *   - "-/3170093456"   (NIS kosong, NISN ada)
+ *   - "-/-"            (dua-duanya kosong)
+ *
+ * Auto-trim whitespace dari input. Whitespace doang dianggap
+ * kosong → ganti "-".
+ *
+ * Catatan: schema DB simpan 2 kolom terpisah (peserta_didik.nis +
+ * .nisn). Helper ini cuma untuk display gabungan di rapor PDF.
+ * Form input + CSV import tetep 2 field terpisah.
+ */
+function formatNomorInduk(
+  nis: string | null | undefined,
+  nisn: string | null | undefined
+): string {
+  const nisStr = nis?.trim() || "-";
+  const nisnStr = nisn?.trim() || "-";
+  return `${nisStr}/${nisnStr}`;
+}
+
 // ============================================================
 // ROOT DOCUMENT
 // ============================================================
@@ -269,8 +272,8 @@ function LembarRaportPage({
             bold
           />
           <IdRow
-            label="Nomor Induk / NISN"
-            value={`${pd?.nis ?? "-"} / ${pd?.nisn ?? "-"}`}
+            label="Nomor Induk/NISN"
+            value={formatNomorInduk(pd?.nis, pd?.nisn)}
           />
         </View>
         <View style={styles.identitasColRight}>
@@ -409,31 +412,7 @@ function LembarRaportPage({
           </>
         )}
 
-        {/* ╔════════════════════════════════════════════════════╗
-            ║ v2.9: TTD LEMBAR 1 — PROPER TABLE GRID             ║
-            ║                                                    ║
-            ║ IDENTIK dengan TTD Lembar 2 (Propela). 5 kolom    ║
-            ║ × 5 baris, border hitam visible.                   ║
-            ║                                                    ║
-            ║ Tanggal MASUK ke dalam Row 1 Kolom 5 (cell yg     ║
-            ║ sama dengan "Wali Kelas" di Row 2).               ║
-            ║                                                    ║
-            ║ Block <Text style={tglLine}>...</Text> yg DULU di ║
-            ║ atas TTD UDAH DIHAPUS — sekarang inline di cell.  ║
-            ║                                                    ║
-            ║ Layout:                                            ║
-            ║ ┌──────────┬─┬──────────┬─┬──────────┐            ║
-            ║ │ ortu     │ │ menget.  │ │ tgl      │ Row 1      ║
-            ║ ├──────────┼─┼──────────┼─┼──────────┤            ║
-            ║ │          │ │ kepala   │ │ wali kls │ Row 2      ║
-            ║ ├──────────┼─┼──────────┼─┼──────────┤            ║
-            ║ │          │ │          │ │          │ Row 3 sig  ║
-            ║ ├──────────┼─┼──────────┼─┼──────────┤            ║
-            ║ │ ........ │ │ kepala   │ │ wali     │ Row 4 nama ║
-            ║ ├──────────┼─┼──────────┼─┼──────────┤            ║
-            ║ │          │ │ NIP. -   │ │          │ Row 5 NIP  ║
-            ║ └──────────┴─┴──────────┴─┴──────────┘            ║
-            ╚════════════════════════════════════════════════════╝ */}
+        {/* TTD LEMBAR 1 — Table grid 5×5 (no border, dari v2.9) */}
         <View style={styles.ttdTable}>
           {/* Row 1: header labels + tanggal */}
           <View style={styles.ttdTr}>
@@ -569,7 +548,7 @@ function MapelTable({
 }
 
 // ============================================================
-// LEMBAR 2 — PROPELA (TIDAK BERUBAH dari v2.8)
+// LEMBAR 2 — PROPELA
 // ============================================================
 
 function LembarPropelaPage({
@@ -608,7 +587,10 @@ function LembarPropelaPage({
             value={pd?.nama_lengkap ?? "-"}
             bold
           />
-          <IdRow label="Nomor Induk / NISN" value={pd?.nisn ?? "-"} />
+          <IdRow
+            label="Nomor Induk/NISN"
+            value={formatNomorInduk(pd?.nis, pd?.nisn)}
+          />
         </View>
         <View style={styles.identitasColRight}>
           <IdRow
@@ -633,11 +615,7 @@ function LembarPropelaPage({
 
       <View style={styles.propelaTableWrapper}>
         {/* v2.12: `fixed` prop → header row OTOMATIS di-render
-            ulang di tiap halaman saat tabel pecah cross-page.
-            Beda dgn position:fixed CSS biasa — ini React-PDF
-            specific: element tetap di posisi flow, cuma di-
-            replicate per halaman. wrap={false} dipertahankan
-            supaya header gak ke-split di tengah baris. */}
+            ulang di tiap halaman saat tabel pecah cross-page. */}
         <View style={styles.propelaHeaderRow} fixed wrap={false}>
           <Text style={[styles.thLeft, styles.colP5Desc]}>Sub-elemen</Text>
           {PREDIKAT_P5_ORDER.map((p, idx) => {
@@ -734,7 +712,7 @@ function LembarPropelaPage({
         </Text>
       </View>
 
-      {/* TTD LEMBAR 2 — Table grid (TIDAK BERUBAH dari v2.8) */}
+      {/* TTD LEMBAR 2 — Table grid 5×5 (no border, dari v2.9) */}
       <View style={styles.ttdTable}>
         {/* Row 1: header labels + tanggal */}
         <View style={styles.ttdTr}>
