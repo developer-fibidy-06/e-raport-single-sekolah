@@ -1,39 +1,35 @@
 // ============================================================
 // FILE PATH: src/components/features/admin/tab-ekskul-preset.tsx
 // ============================================================
-// REPLACE. v3.0 — migrasi Modal/Dialog → Sheet pattern.
+// FULL REPLACE — siap copy-paste.
 //
-// CHANGELOG vs versi sebelumnya:
+// Pattern di-align dengan tab-mata-pelajaran.tsx supaya konsisten:
+//   - typedResolver (bukan zodResolver langsung)
+//   - useCreateEkskulPreset + useUpdateEkskulPreset (bukan useUpsert)
+//   - Form pakai .reset(values) di useEffect (bukan `values:` prop
+//     yang bikin Resolver type mismatch)
 //
-//   1. PresetFormDialog (Dialog max-w-md) → PresetFormSheet
-//      Sheet side="right" desktop / side="bottom" mobile,
-//      width sm:max-w-xl (default tier — sesuai pattern admin
-//      lainnya).
+// Hooks dependency (HARUS exist di @/hooks):
+//   - useEkskulPresets       — list semua preset
+//   - useCreateEkskulPreset  — insert
+//   - useUpdateEkskulPreset  — update { id, values }
+//   - useDeleteEkskulPreset  — delete id
 //
-//   2. Header pattern konsisten dengan TambahKelasSheet:
-//      icon kotak primary/10 + label uppercase + heading +
-//      subtitle. pr-12 untuk space tombol X auto Sheet.
+// File hooks-nya di paket ini: 01-use-ekskul-preset.ts
+// Drop di src/hooks/use-ekskul-preset.ts dan tambah export
+// di src/hooks/index.ts: `export * from "./use-ekskul-preset"`
 //
-//   3. Footer sticky di bawah: tombol Batal + Simpan/Tambah.
-//      Body scrollable berisi form fields + tip box.
-//
-//   4. PRESERVED:
-//      - Semua hooks (useEkskulPresets, useCreateEkskulPreset,
-//        useUpdateEkskulPreset, useDeleteEkskulPreset)
-//      - Sort order: gender (SEMUA → L → P) → urutan → nama
-//      - Table 3 kolom (#, Nama, Gender) + kebab menu
-//      - DeleteConfirmDialog (AlertDialog) — modal untuk delete OK
-//      - Form validation, gender select, urutan input, switch aktif
-//      - Tip box "Preset SEMUA berlaku untuk siswa L dan P"
-//
-//   5. Detail viewer tidak diperlukan (data simple: nama + gender).
-//      Tap row langsung edit lewat kebab menu — gak ada parent
-//      sheet di tab ini.
+// Changelog dari v2:
+//   1. Pakai typedResolver supaya Resolver type-nya selaras
+//   2. defaultValues + form.reset() di useEffect (fix RHF type bug)
+//   3. Pisah useCreate + useUpdate (selaras dengan codebase)
+//   4. Number input pakai valueAsNumber lewat onChange manual
+//   5. Sort tetap: SEMUA → L → P → urutan → nama
 // ============================================================
 
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import {
   useEkskulPresets,
@@ -45,21 +41,21 @@ import { useIsDesktop } from "@/hooks/use-is-desktop";
 import {
   ekskulPresetSchema,
   typedResolver,
-  type EkskulPresetFormData,
+  type EkskulPresetFormValues,
 } from "@/lib/validators";
-import type { EkskulPreset, GenderPreset } from "@/types";
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
+import type { EkskulPreset } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -74,14 +70,6 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -92,22 +80,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Plus,
   Pencil,
   Trash2,
-  Loader2,
-  MoreHorizontal,
-  User,
-  UserRound,
-  Users,
+  Search,
   Medal,
+  Loader2,
+  Save,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -115,16 +94,28 @@ import { cn } from "@/lib/utils";
 // CONSTANTS
 // ============================================================
 
-const GENDER_COLOR: Record<GenderPreset, string> = {
-  L: "bg-blue-50 text-blue-700 border-blue-200",
-  P: "bg-pink-50 text-pink-700 border-pink-200",
-  SEMUA: "bg-emerald-50 text-emerald-700 border-emerald-200",
+const PLACEHOLDER_TEMPLATES: Record<"A" | "B" | "C" | "D", string> = {
+  A: "Mengikuti kegiatan ekstrakurikuler dengan sangat aktif dan menunjukkan prestasi yang membanggakan.",
+  B: "Mengikuti kegiatan ekstrakurikuler dengan baik dan menunjukkan perkembangan yang positif.",
+  C: "Mengikuti kegiatan ekstrakurikuler dengan partisipasi cukup, perlu meningkatkan keaktifan dan keterampilan.",
+  D: "Partisipasi di kegiatan ekstrakurikuler masih kurang, perlu motivasi dan pendampingan agar lebih aktif.",
 };
 
-const GENDER_ORDER: Record<GenderPreset, number> = {
-  SEMUA: 0,
-  L: 1,
-  P: 2,
+const GENDER_OPTIONS = [
+  { value: "SEMUA", label: "Semua Gender" },
+  { value: "L", label: "Laki-laki" },
+  { value: "P", label: "Perempuan" },
+] as const;
+
+const DEFAULT_VALUES: EkskulPresetFormValues = {
+  nama_ekskul: "",
+  gender: "SEMUA",
+  is_aktif: true,
+  urutan: 0,
+  keterangan_a: "",
+  keterangan_b: "",
+  keterangan_c: "",
+  keterangan_d: "",
 };
 
 // ============================================================
@@ -133,240 +124,293 @@ const GENDER_ORDER: Record<GenderPreset, number> = {
 
 export function TabEkskulPreset() {
   const { data: presets = [], isLoading } = useEkskulPresets();
-  const [editing, setEditing] = useState<EkskulPreset | null>(null);
-  const [showAdd, setShowAdd] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<EkskulPreset | null>(null);
+  const del = useDeleteEkskulPreset();
 
-  const sortedPresets = useMemo(() => {
-    return [...presets].sort((a, b) => {
-      const genderDiff =
-        GENDER_ORDER[a.gender as GenderPreset] -
-        GENDER_ORDER[b.gender as GenderPreset];
-      if (genderDiff !== 0) return genderDiff;
+  const [search, setSearch] = useState("");
+  const [genderFilter, setGenderFilter] = useState<
+    "ALL" | "L" | "P" | "SEMUA"
+  >("ALL");
+  const [formSheet, setFormSheet] = useState<{
+    open: boolean;
+    editing: EkskulPreset | null;
+  }>({ open: false, editing: null });
+  const [deleteTarget, setDeleteTarget] = useState<EkskulPreset | null>(null);
+
+  const filtered = useMemo(() => {
+    let result = [...presets];
+
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter((p) => p.nama_ekskul.toLowerCase().includes(q));
+    }
+
+    if (genderFilter !== "ALL") {
+      result = result.filter((p) => p.gender === genderFilter);
+    }
+
+    // Sort: SEMUA → L → P, lalu urutan, lalu nama
+    const genderOrder: Record<string, number> = { SEMUA: 0, L: 1, P: 2 };
+    result.sort((a, b) => {
+      const ga = genderOrder[a.gender] ?? 99;
+      const gb = genderOrder[b.gender] ?? 99;
+      if (ga !== gb) return ga - gb;
       if (a.urutan !== b.urutan) return a.urutan - b.urutan;
       return a.nama_ekskul.localeCompare(b.nama_ekskul, "id");
     });
-  }, [presets]);
+
+    return result;
+  }, [presets, search, genderFilter]);
 
   return (
-    <div className="space-y-5">
-      {/* Toolbar — tombol Tambah Preset di kanan */}
-      <div className="flex justify-end">
-        <Button onClick={() => setShowAdd(true)} size="sm">
-          <Plus className="mr-1 h-4 w-4" />
-          Tambah
-        </Button>
-      </div>
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0 flex-1">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Medal className="h-4 w-4" />
+                Master Preset Ekstrakurikuler
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Daftar ekskul yang muncul sebagai opsi Isi Cepat di form
+                penilaian. Template keterangan A/B/C/D akan dipakai sesuai
+                predikat siswa.
+              </CardDescription>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => setFormSheet({ open: true, editing: null })}
+              className="gap-1.5 flex-shrink-0"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Tambah Preset
+            </Button>
+          </div>
+        </CardHeader>
 
-      {/* Table */}
-      {isLoading ? (
-        <div className="space-y-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-12 rounded-lg bg-muted animate-pulse" />
-          ))}
-        </div>
-      ) : sortedPresets.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Belum ada preset ekskul. Klik <em>Tambah</em> untuk memulai.
-        </div>
-      ) : (
-        <div className="rounded-lg border overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="w-12 px-3 text-xs">#</TableHead>
-                <TableHead className="px-2 text-xs">
-                  Nama Ekstrakurikuler
-                </TableHead>
-                <TableHead className="w-24 px-2 text-xs text-center">
-                  Gender
-                </TableHead>
-                <TableHead className="w-12 px-2" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sortedPresets.map((preset, idx) => (
+        <CardContent className="space-y-3">
+          {/* Search + filter */}
+          <div className="flex gap-2 flex-wrap">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Cari nama ekskul..."
+                className="pl-8 h-9"
+              />
+            </div>
+            <Select
+              value={genderFilter}
+              onValueChange={(v) => setGenderFilter(v as typeof genderFilter)}
+            >
+              <SelectTrigger className="w-[180px] h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Semua Filter</SelectItem>
+                <SelectItem value="SEMUA">Gender: Semua</SelectItem>
+                <SelectItem value="L">Gender: Laki-laki</SelectItem>
+                <SelectItem value="P">Gender: Perempuan</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {isLoading ? (
+            <div className="space-y-2">
+              {[...Array(3)].map((_, i) => (
+                <div
+                  key={i}
+                  className="h-14 rounded-lg bg-muted animate-pulse"
+                />
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-8 text-sm text-muted-foreground">
+              {search || genderFilter !== "ALL" ? (
+                <>Tidak ada preset cocok dengan filter.</>
+              ) : (
+                <>
+                  Belum ada preset ekskul. Klik <em>Tambah Preset</em> untuk
+                  mulai.
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="border rounded-lg divide-y">
+              {filtered.map((preset) => (
                 <PresetTableRow
                   key={preset.id}
                   preset={preset}
-                  index={idx + 1}
-                  onEdit={() => setEditing(preset)}
-                  onDelete={() => setConfirmDelete(preset)}
+                  onEdit={() => setFormSheet({ open: true, editing: preset })}
+                  onDelete={() => setDeleteTarget(preset)}
                 />
               ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Sheet — Tambah Preset (no parent) */}
       <PresetFormSheet
-        open={showAdd}
-        onOpenChange={setShowAdd}
-        editing={null}
+        open={formSheet.open}
+        onOpenChange={(v) =>
+          setFormSheet((p) => ({
+            ...p,
+            open: v,
+            editing: v ? p.editing : null,
+          }))
+        }
+        editing={formSheet.editing}
       />
 
-      {/* Sheet — Edit Preset (no parent) */}
-      <PresetFormSheet
-        open={editing !== null}
-        onOpenChange={(v) => {
-          if (!v) setEditing(null);
-        }}
-        editing={editing}
-      />
-
-      {/* Modal — confirm delete (destructive, tetap Dialog) */}
-      {confirmDelete && (
-        <DeleteConfirmDialog
-          preset={confirmDelete}
-          onClose={() => setConfirmDelete(null)}
-        />
-      )}
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(v) => !v && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Hapus Preset?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Preset <strong>{deleteTarget?.nama_ekskul}</strong> akan dihapus.
+              Data ekskul siswa yang udah di-input{" "}
+              <em>tidak akan</em> terhapus, tapi preset ini gak akan muncul
+              lagi sebagai opsi Isi Cepat.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={del.isPending}>
+              Batal
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                if (deleteTarget) {
+                  del.mutate(deleteTarget.id, {
+                    onSuccess: () => setDeleteTarget(null),
+                  });
+                }
+              }}
+              disabled={del.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {del.isPending && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              )}
+              Hapus
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
 // ============================================================
-// PresetTableRow — single row dengan kebab menu
+// PresetTableRow
 // ============================================================
 
 function PresetTableRow({
   preset,
-  index,
   onEdit,
   onDelete,
 }: {
   preset: EkskulPreset;
-  index: number;
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const templateSetCount = [
+    preset.keterangan_a,
+    preset.keterangan_b,
+    preset.keterangan_c,
+    preset.keterangan_d,
+  ].filter((t) => t && t.trim().length > 0).length;
+
+  const genderBadge =
+    preset.gender === "L"
+      ? { label: "L", color: "bg-blue-50 text-blue-700 border-blue-200" }
+      : preset.gender === "P"
+        ? { label: "P", color: "bg-pink-50 text-pink-700 border-pink-200" }
+        : {
+          label: "Semua",
+          color:
+            "bg-emerald-50 text-emerald-700 border-emerald-200",
+        };
+
   return (
-    <TableRow
+    <div
       onClick={onEdit}
-      className={cn("cursor-pointer", !preset.is_aktif && "opacity-60")}
+      className={cn(
+        "flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-muted/40 transition-colors",
+        !preset.is_aktif && "opacity-60"
+      )}
     >
-      <TableCell className="w-12 px-3 py-2.5 text-xs text-muted-foreground tabular-nums font-mono">
-        {index}.
-      </TableCell>
-      <TableCell className="px-2 py-2.5 max-w-0">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-sm font-medium truncate">{preset.nama_ekskul}</p>
           <span
-            className="block truncate text-sm font-medium"
-            title={preset.nama_ekskul}
+            className={cn(
+              "text-[10px] font-medium px-1.5 py-0.5 rounded border flex-shrink-0",
+              genderBadge.color
+            )}
           >
-            {preset.nama_ekskul}
+            {genderBadge.label}
           </span>
           {!preset.is_aktif && (
-            <Badge
-              variant="outline"
-              className="text-[10px] h-4 px-1.5 flex-shrink-0"
-            >
+            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded border bg-muted text-muted-foreground border-border flex-shrink-0">
               Nonaktif
-            </Badge>
+            </span>
           )}
         </div>
-      </TableCell>
-      <TableCell className="w-24 px-2 py-2.5 text-center">
-        <Badge
-          variant="outline"
-          className={cn(
-            "text-xs",
-            GENDER_COLOR[preset.gender as GenderPreset]
-          )}
+        <div className="flex items-center gap-3 mt-0.5">
+          <p className="text-[11px] text-muted-foreground">
+            Urutan: {preset.urutan}
+          </p>
+          <p
+            className={cn(
+              "text-[11px]",
+              templateSetCount === 4
+                ? "text-emerald-700"
+                : templateSetCount > 0
+                  ? "text-amber-700"
+                  : "text-muted-foreground"
+            )}
+          >
+            Template: {templateSetCount}/4
+            {templateSetCount < 4 && " (pakai generic fallback)"}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex gap-0.5 flex-shrink-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit();
+          }}
         >
-          {preset.gender}
-        </Badge>
-      </TableCell>
-      <TableCell className="w-12 px-2 py-2.5 text-right">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={(e) => e.stopPropagation()}
-              aria-label={`Aksi untuk ${preset.nama_ekskul}`}
-            >
-              <MoreHorizontal className="h-3.5 w-3.5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <DropdownMenuItem
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit();
-              }}
-            >
-              <Pencil className="mr-2 h-3.5 w-3.5" />
-              Edit Preset
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-            >
-              <Trash2 className="mr-2 h-3.5 w-3.5" />
-              Hapus Preset
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </TableCell>
-    </TableRow>
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-destructive hover:text-destructive"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
   );
 }
 
 // ============================================================
-// DeleteConfirmDialog — AlertDialog (modal untuk delete = OK)
-// ============================================================
-
-function DeleteConfirmDialog({
-  preset,
-  onClose,
-}: {
-  preset: EkskulPreset;
-  onClose: () => void;
-}) {
-  const del = useDeleteEkskulPreset();
-
-  return (
-    <AlertDialog open onOpenChange={(v) => !v && onClose()}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Hapus preset ekskul?</AlertDialogTitle>
-          <AlertDialogDescription>
-            &quot;{preset.nama_ekskul}&quot; akan dihapus dari daftar preset.
-            Data ekskul siswa yang sudah ter-insert sebelumnya tidak akan
-            terpengaruh.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Batal</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={() => {
-              del.mutate(preset.id, {
-                onSuccess: () => onClose(),
-              });
-            }}
-            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-          >
-            Hapus
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
-// ============================================================
-// PresetFormSheet — replaces PresetFormDialog
-// Default tier (sm:max-w-xl) — form simple cuma 4 field
+// PresetFormSheet — handle add + edit dengan 4 template fields
 // ============================================================
 
 function PresetFormSheet({
@@ -381,35 +425,68 @@ function PresetFormSheet({
   const isDesktop = useIsDesktop();
   const createMut = useCreateEkskulPreset();
   const updateMut = useUpdateEkskulPreset();
+  const isEditMode = editing !== null;
 
-  const form = useForm<EkskulPresetFormData>({
+  const form = useForm<EkskulPresetFormValues>({
     resolver: typedResolver(ekskulPresetSchema),
-    values: editing
-      ? {
-          nama_ekskul: editing.nama_ekskul,
-          gender: editing.gender as GenderPreset,
-          urutan: editing.urutan,
-          is_aktif: editing.is_aktif,
-        }
-      : {
-          nama_ekskul: "",
-          gender: "SEMUA",
-          urutan: 99,
-          is_aktif: true,
-        },
+    defaultValues: DEFAULT_VALUES,
   });
 
-  const onSubmit = async (values: EkskulPresetFormData) => {
+  // Sync form setiap sheet dibuka atau editing target berubah.
+  // Pattern reset() ini lebih reliable daripada `values:` prop —
+  // gak bikin RHF Resolver type mismatch.
+  useEffect(() => {
+    if (!open) return;
+    if (editing) {
+      form.reset({
+        nama_ekskul: editing.nama_ekskul,
+        gender: editing.gender,
+        is_aktif: editing.is_aktif,
+        urutan: editing.urutan,
+        keterangan_a: editing.keterangan_a ?? "",
+        keterangan_b: editing.keterangan_b ?? "",
+        keterangan_c: editing.keterangan_c ?? "",
+        keterangan_d: editing.keterangan_d ?? "",
+      });
+    } else {
+      form.reset(DEFAULT_VALUES);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing]);
+
+  const onSubmit = async (values: EkskulPresetFormValues) => {
+    // Normalize empty strings ke null untuk DB consistency
+    const normalized: EkskulPresetFormValues = {
+      ...values,
+      nama_ekskul: values.nama_ekskul.trim(),
+      keterangan_a:
+        values.keterangan_a && values.keterangan_a.trim().length > 0
+          ? values.keterangan_a.trim()
+          : null,
+      keterangan_b:
+        values.keterangan_b && values.keterangan_b.trim().length > 0
+          ? values.keterangan_b.trim()
+          : null,
+      keterangan_c:
+        values.keterangan_c && values.keterangan_c.trim().length > 0
+          ? values.keterangan_c.trim()
+          : null,
+      keterangan_d:
+        values.keterangan_d && values.keterangan_d.trim().length > 0
+          ? values.keterangan_d.trim()
+          : null,
+    };
+
     try {
       if (editing) {
-        await updateMut.mutateAsync({ id: editing.id, values });
+        await updateMut.mutateAsync({ id: editing.id, values: normalized });
       } else {
-        await createMut.mutateAsync(values);
+        await createMut.mutateAsync(normalized);
       }
       onOpenChange(false);
-      form.reset();
+      form.reset(DEFAULT_VALUES);
     } catch {
-      /* toast handled */
+      /* toast handled di hook */
     }
   };
 
@@ -421,187 +498,269 @@ function PresetFormSheet({
         side={isDesktop ? "right" : "bottom"}
         className={cn(
           "p-0 flex flex-col gap-0",
-          isDesktop && "w-full sm:max-w-xl",
-          !isDesktop && "h-auto max-h-[92vh] rounded-t-2xl"
+          isDesktop && "w-full sm:max-w-2xl",
+          !isDesktop && "h-[92vh] rounded-t-2xl"
         )}
       >
         <SheetTitle className="sr-only">
-          {editing ? `Edit Preset — ${editing.nama_ekskul}` : "Tambah Preset Ekskul"}
+          {isEditMode
+            ? `Edit Preset — ${editing?.nama_ekskul}`
+            : "Tambah Preset Ekskul"}
         </SheetTitle>
         <SheetDescription className="sr-only">
-          Form untuk {editing ? "mengedit" : "menambahkan"} preset ekstrakurikuler
+          Form admin untuk mengelola preset ekstrakurikuler beserta template
+          keterangan untuk predikat A/B/C/D
         </SheetDescription>
 
         {!isDesktop && (
           <div className="mx-auto mt-2 mb-1 h-1 w-12 flex-shrink-0 rounded-full bg-muted-foreground/30" />
         )}
 
-        <Form {...form}>
-          <form
-            onSubmit={form.handleSubmit(onSubmit)}
-            className="flex flex-1 flex-col min-h-0"
-          >
-            {/* Header */}
-            <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
-                {editing ? (
-                  <Pencil className="h-4 w-4 text-primary" />
-                ) : (
-                  <Medal className="h-4 w-4 text-primary" />
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-                  {editing ? "Edit Preset" : "Tambah Preset Ekskul"}
-                </p>
-                <h3 className="text-base font-semibold leading-tight mt-0.5 truncate">
-                  {editing ? editing.nama_ekskul : "Preset Baru"}
-                </h3>
-              </div>
+        <form
+          onSubmit={form.handleSubmit(onSubmit)}
+          className="flex flex-1 flex-col min-h-0"
+        >
+          {/* Header */}
+          <div className="flex items-start gap-3 border-b px-4 py-3 sm:px-5 pr-12">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 flex-shrink-0">
+              {isEditMode ? (
+                <Pencil className="h-4 w-4 text-primary" />
+              ) : (
+                <Plus className="h-4 w-4 text-primary" />
+              )}
             </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                {isEditMode ? "Edit Preset Ekskul" : "Tambah Preset Ekskul"}
+              </p>
+              <h3 className="text-base font-semibold leading-tight mt-0.5 truncate">
+                {isEditMode ? editing?.nama_ekskul : "Preset Baru"}
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Master data untuk Isi Cepat di form penilaian siswa
+              </p>
+            </div>
+          </div>
 
-            {/* Body — scrollable */}
-            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-4">
-              <FormField
-                control={form.control}
-                name="nama_ekskul"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      Nama Ekstrakurikuler{" "}
-                      <span className="text-destructive">*</span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="Contoh: Pramuka, Desain Grafis, Tata Rias"
-                        autoFocus
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
+          {/* Body */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5 space-y-5">
+            {/* Section 1: Identitas */}
+            <section className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="nama_ekskul">
+                  Nama Ekstrakurikuler{" "}
+                  <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="nama_ekskul"
+                  {...form.register("nama_ekskul")}
+                  placeholder="Pramuka, Pencak Silat, Tahfizh, dll"
+                  autoFocus={!isEditMode}
+                />
+                {form.formState.errors.nama_ekskul && (
+                  <p className="text-xs text-destructive">
+                    {form.formState.errors.nama_ekskul.message}
+                  </p>
                 )}
-              />
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <FormField
-                  control={form.control}
-                  name="gender"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        Gender <span className="text-destructive">*</span>
-                      </FormLabel>
-                      <Select
-                        value={field.value}
-                        onValueChange={(v) =>
-                          field.onChange(v as GenderPreset)
-                        }
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="SEMUA">
-                            <div className="flex items-center gap-2">
-                              <Users className="h-3.5 w-3.5" />
-                              Semua (L &amp; P)
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="L">
-                            <div className="flex items-center gap-2">
-                              <User className="h-3.5 w-3.5" />
-                              Laki-laki
-                            </div>
-                          </SelectItem>
-                          <SelectItem value="P">
-                            <div className="flex items-center gap-2">
-                              <UserRound className="h-3.5 w-3.5" />
-                              Perempuan
-                            </div>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="urutan"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Urutan</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={99}
-                          inputMode="numeric"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <div className="space-y-2">
+                  <Label>Gender</Label>
+                  <Select
+                    value={form.watch("gender")}
+                    onValueChange={(v) =>
+                      form.setValue("gender", v as "L" | "P" | "SEMUA")
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {GENDER_OPTIONS.map((g) => (
+                        <SelectItem key={g.value} value={g.value}>
+                          {g.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="urutan">Urutan</Label>
+                  <Input
+                    id="urutan"
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    value={form.watch("urutan") ?? 0}
+                    onChange={(e) =>
+                      form.setValue("urutan", Number(e.target.value) || 0)
+                    }
+                  />
+                </div>
               </div>
 
-              <FormField
-                control={form.control}
-                name="is_aktif"
-                render={({ field }) => (
-                  <FormItem>
-                    <div className="flex items-center justify-between rounded-md border px-3 py-2">
-                      <FormLabel className="cursor-pointer">Aktif</FormLabel>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </div>
-                    <FormMessage />
-                  </FormItem>
-                )}
+              <div className="flex items-center justify-between rounded-lg border px-3 py-2.5">
+                <div className="space-y-0.5">
+                  <Label htmlFor="is_aktif" className="cursor-pointer">
+                    Aktif
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Tampilkan sebagai opsi Isi Cepat di form penilaian
+                  </p>
+                </div>
+                <Switch
+                  id="is_aktif"
+                  checked={form.watch("is_aktif") ?? true}
+                  onCheckedChange={(v) => form.setValue("is_aktif", v)}
+                />
+              </div>
+            </section>
+
+            {/* Section 2: Template Keterangan */}
+            <section className="space-y-3 pt-2 border-t">
+              <div>
+                <h4 className="text-sm font-semibold">
+                  Template Keterangan Rapor
+                </h4>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Template per predikat. <strong>A/B</strong> dipakai
+                  quick-fill batch (acak 70/30). <strong>C/D</strong> dipakai
+                  saat operator manual edit/downgrade siswa. Kosong = pakai
+                  template generic.
+                </p>
+              </div>
+
+              <TemplateField
+                form={form}
+                fieldName="keterangan_a"
+                predikat="A"
+                label="Predikat A — Sangat Baik"
+                badgeColor="bg-emerald-50 text-emerald-700 border-emerald-200"
               />
+              <TemplateField
+                form={form}
+                fieldName="keterangan_b"
+                predikat="B"
+                label="Predikat B — Baik"
+                badgeColor="bg-blue-50 text-blue-700 border-blue-200"
+              />
+              <TemplateField
+                form={form}
+                fieldName="keterangan_c"
+                predikat="C"
+                label="Predikat C — Cukup"
+                badgeColor="bg-amber-50 text-amber-700 border-amber-200"
+              />
+              <TemplateField
+                form={form}
+                fieldName="keterangan_d"
+                predikat="D"
+                label="Predikat D — Perlu Bimbingan"
+                badgeColor="bg-red-50 text-red-700 border-red-200"
+              />
+            </section>
+          </div>
 
-              <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                💡 Preset <strong>SEMUA</strong> berlaku untuk siswa L dan P.
-                Preset <strong>L</strong> hanya muncul untuk siswa laki-laki,
-                begitu juga <strong>P</strong>.
-              </div>
-            </div>
-
-            {/* Footer — sticky */}
-            <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => onOpenChange(false)}
-                disabled={isPending}
-                className="flex-1"
-              >
-                Batal
-              </Button>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={isPending}
-                className="flex-1 gap-1.5"
-              >
-                {isPending && (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                )}
-                {editing ? "Simpan" : "Tambah"}
-              </Button>
-            </div>
-          </form>
-        </Form>
+          {/* Footer */}
+          <div className="border-t bg-background px-4 py-3 sm:px-5 flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+              className="flex-1"
+            >
+              Batal
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={isPending}
+              className="flex-1 gap-1.5"
+            >
+              {isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : isEditMode ? (
+                <Save className="h-3.5 w-3.5" />
+              ) : (
+                <Plus className="h-3.5 w-3.5" />
+              )}
+              {isEditMode ? "Simpan" : "Tambah"}
+            </Button>
+          </div>
+        </form>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ============================================================
+// TemplateField — reusable textarea untuk satu predikat
+// ============================================================
+
+function TemplateField({
+  form,
+  fieldName,
+  predikat,
+  label,
+  badgeColor,
+}: {
+  form: ReturnType<typeof useForm<EkskulPresetFormValues>>;
+  fieldName: "keterangan_a" | "keterangan_b" | "keterangan_c" | "keterangan_d";
+  predikat: "A" | "B" | "C" | "D";
+  label: string;
+  badgeColor: string;
+}) {
+  const value = form.watch(fieldName) ?? "";
+  const charCount = value.length;
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              "inline-flex items-center justify-center w-5 h-5 rounded text-[10px] font-bold border",
+              badgeColor
+            )}
+          >
+            {predikat}
+          </span>
+          <Label
+            htmlFor={fieldName}
+            className="text-xs font-medium cursor-pointer"
+          >
+            {label}
+          </Label>
+        </div>
+        <span
+          className={cn(
+            "text-[10px] tabular-nums",
+            charCount > 500
+              ? "text-destructive"
+              : charCount > 0
+                ? "text-muted-foreground"
+                : "text-muted-foreground/60"
+          )}
+        >
+          {charCount}/500
+        </span>
+      </div>
+      <Textarea
+        id={fieldName}
+        rows={3}
+        {...form.register(fieldName)}
+        placeholder={PLACEHOLDER_TEMPLATES[predikat]}
+        className="text-sm resize-none"
+      />
+      {form.formState.errors[fieldName] && (
+        <p className="text-xs text-destructive">
+          {form.formState.errors[fieldName]?.message}
+        </p>
+      )}
+    </div>
   );
 }

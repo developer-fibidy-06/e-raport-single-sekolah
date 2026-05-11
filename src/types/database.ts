@@ -755,33 +755,45 @@ export interface Database {
 
       ekskul_preset: {
         Row: {
-          id: number;
+          id: string;
           nama_ekskul: string;
-          gender: string;
+          gender: "L" | "P" | "SEMUA";
           is_aktif: boolean;
           urutan: number;
+          keterangan_a: string | null;
+          keterangan_b: string | null;
+          keterangan_c: string | null;
+          keterangan_d: string | null;
           created_at: string;
           updated_at: string;
         };
         Insert: {
-          id?: number;
+          id?: string;
           nama_ekskul: string;
-          gender: string;
+          gender: "L" | "P" | "SEMUA";
           is_aktif?: boolean;
           urutan?: number;
+          keterangan_a?: string | null;
+          keterangan_b?: string | null;
+          keterangan_c?: string | null;
+          keterangan_d?: string | null;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
-          id?: number;
+          id?: string;
           nama_ekskul?: string;
-          gender?: string;
+          gender?: "L" | "P" | "SEMUA";
           is_aktif?: boolean;
           urutan?: number;
+          keterangan_a?: string | null;
+          keterangan_b?: string | null;
+          keterangan_c?: string | null;
+          keterangan_d?: string | null;
           created_at?: string;
           updated_at?: string;
         };
-        Relationships: [];
+        Relationships: [];   // ← BARIS BARU
       };
 
       ketidakhadiran: {

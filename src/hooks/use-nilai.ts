@@ -360,6 +360,8 @@ export function useEkskulByEnrollment(enrollmentId: string | null) {
   });
 }
 
+// ─── 1) useUpsertEkskul — sekarang support update mode ────────
+
 export function useUpsertEkskul() {
   const supabase = createClient();
   const qc = useQueryClient();
@@ -373,23 +375,45 @@ export function useUpsertEkskul() {
       predikat?: string | null;
       keterangan?: string | null;
     }) => {
-      const { error } = await supabase
-        .from("ekstrakurikuler")
-        .insert({
-          enrollment_id: payload.enrollment_id,
-          nama_ekskul: payload.nama_ekskul,
-          predikat: payload.predikat ?? null,
-          keterangan: payload.keterangan ?? null,
-          input_by: userId ?? null,
-        });
+      // UPDATE mode: id ada → update existing row
+      if (payload.id) {
+        const { error } = await supabase
+          .from("ekstrakurikuler")
+          .update({
+            nama_ekskul: payload.nama_ekskul,
+            predikat: payload.predikat ?? null,
+            keterangan: payload.keterangan ?? null,
+            input_by: userId ?? null,
+          })
+          .eq("id", payload.id);
+        if (error) throw error;
+        return;
+      }
+
+      // INSERT mode: id undefined → insert row baru
+      const { error } = await supabase.from("ekstrakurikuler").insert({
+        enrollment_id: payload.enrollment_id,
+        nama_ekskul: payload.nama_ekskul,
+        predikat: payload.predikat ?? null,
+        keterangan: payload.keterangan ?? null,
+        input_by: userId ?? null,
+      });
       if (error) throw error;
     },
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: QK.ekskul(vars.enrollment_id) });
+      // Toast feedback — beda message untuk insert vs update
+      if (vars.id) {
+        toast.success("Ekskul berhasil diperbarui");
+      } else {
+        toast.success("Ekskul berhasil ditambahkan");
+      }
     },
     onError: (err: Error) => toast.error("Gagal simpan ekskul: " + err.message),
   });
 }
+
+// ─── 2) useBatchInsertEkskul — keterangan type fix ────────────
 
 export function useBatchInsertEkskul() {
   const supabase = createClient();
@@ -403,7 +427,7 @@ export function useBatchInsertEkskul() {
         enrollment_id: string;
         nama_ekskul: string;
         predikat: "A" | "B";
-        keterangan: null;
+        keterangan: string; // ← CHANGED dari `null` ke `string`
       }>;
     }) => {
       if (payload.rows.length === 0) {

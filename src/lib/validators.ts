@@ -275,43 +275,50 @@ export const catatanP5Schema = z.object({
 export type CatatanP5FormData = z.infer<typeof catatanP5Schema>;
 
 // ============================================================
-// EKSTRAKURIKULER
+// PATCH untuk src/lib/validators.ts (v2 — 4-tier A/B/C/D)
 // ============================================================
-
-export const ekstrakurikulerSchema = z.object({
-  enrollment_id: z.string().uuid(),
-  nama_ekskul: z.string().min(1, "Nama ekstrakurikuler wajib diisi"),
-  predikat: z.enum(["A", "B", "C", "D"]).optional().nullable(),
-  keterangan: z.string().optional().nullable(),
-});
-
-export type EkstrakurikulerFormData = z.infer<typeof ekstrakurikulerSchema>;
-
-// ============================================================
-// EKSKUL PRESET
+// Extend ekskulPresetSchema dengan 4 keterangan templates.
+// Cari ekskulPresetSchema, replace dengan versi ini.
 // ============================================================
 
 export const ekskulPresetSchema = z.object({
-  nama_ekskul: z.string().min(1, "Nama ekskul wajib diisi"),
-  gender: z.enum(["L", "P", "SEMUA"]),
-  urutan: z.coerce.number().int().min(1).max(99).default(99),
+  nama_ekskul: z
+    .string()
+    .min(1, "Nama ekskul wajib diisi")
+    .max(100, "Nama ekskul maksimal 100 karakter")
+    .trim(),
+  gender: z.enum(["L", "P", "SEMUA"], {
+    message: "Gender harus L, P, atau SEMUA",
+  }),
   is_aktif: z.boolean().default(true),
+  urutan: z
+    .number()
+    .int("Urutan harus bilangan bulat")
+    .min(0, "Urutan tidak boleh negatif")
+    .default(0),
+  keterangan_a: z
+    .string()
+    .max(500, "Template A maksimal 500 karakter")
+    .nullable()
+    .optional(),
+  keterangan_b: z
+    .string()
+    .max(500, "Template B maksimal 500 karakter")
+    .nullable()
+    .optional(),
+  keterangan_c: z
+    .string()
+    .max(500, "Template C maksimal 500 karakter")
+    .nullable()
+    .optional(),
+  keterangan_d: z
+    .string()
+    .max(500, "Template D maksimal 500 karakter")
+    .nullable()
+    .optional(),
 });
 
-export type EkskulPresetFormData = z.infer<typeof ekskulPresetSchema>;
-
-// ============================================================
-// KETIDAKHADIRAN
-// ============================================================
-
-export const ketidakhadiranSchema = z.object({
-  enrollment_id: z.string().uuid(),
-  sakit: z.coerce.number().int().min(0).default(0),
-  izin: z.coerce.number().int().min(0).default(0),
-  alpha: z.coerce.number().int().min(0).default(0),
-});
-
-export type KetidakhadiranFormData = z.infer<typeof ketidakhadiranSchema>;
+export type EkskulPresetFormValues = z.infer<typeof ekskulPresetSchema>;
 
 // ============================================================
 // CATATAN WALI KELAS
