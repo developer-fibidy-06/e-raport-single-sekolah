@@ -96,7 +96,7 @@ const EKSKUL_LEVELS: ReadonlyArray<QuickFillLevelOption<EkskulLevel>> = [
   {
     value: "preset",
     label: "Tambah dari preset",
-    desc: "Predikat acak ~70% A, ~30% B",
+    desc: "Predikat Range ~70% A, ~30% B",
   },
 ];
 
